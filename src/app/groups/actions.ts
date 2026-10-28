@@ -23,7 +23,7 @@ async function getSignedInClient() {
 }
 
 export async function createGroup(formData: FormData) {
-  const { supabase, user } = await getSignedInClient();
+  const { supabase } = await getSignedInClient();
   const name = String(formData.get("name") ?? "").trim();
   const currency = String(formData.get("currency") ?? "INR");
 
@@ -35,18 +35,28 @@ export async function createGroup(formData: FormData) {
     goWithError("group-details");
   }
 
-  const { data, error } = await supabase
-    .from("groups")
-    .insert({ name, currency, created_by: user.id })
-    .select("id")
-    .single();
-  if (error) {
-    console.error("Group creation failed:", error.message);
+  const { data: groupId, error } = await supabase.rpc("create_group", {
+    p_name: name,
+    p_currency: currency,
+  });
+  if (error || !groupId) {
+    console.error(
+      "Group creation failed:",
+      JSON.stringify({
+        code: error?.code,
+        message: error?.message ?? "The create_group RPC returned no group ID.",
+        details: error?.details,
+        hint: error?.hint,
+      }),
+    );
+    if (error && ["42501", "PGRST202"].includes(error.code)) {
+      goWithError("group-create-rpc-setup");
+    }
     goWithError("group-create");
   }
 
   revalidatePath("/");
-  redirect(`/?group=${data.id}&notice=group-created`);
+  redirect(`/?group=${groupId}&notice=group-created`);
 }
 
 export async function createInvite(

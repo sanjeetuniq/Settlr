@@ -16,6 +16,10 @@ type Table<Row, Insert, Update = Partial<Insert>> = {
 export type Database = {
   public: {
     Tables: {
+      todos: Table<
+        { id: number; name: string },
+        { id?: number; name: string }
+      >;
       profiles: Table<
         { id: string; display_name: string; created_at: string },
         { id: string; display_name: string; created_at?: string }
@@ -155,6 +159,10 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      create_group: {
+        Args: { p_name: string; p_currency: string };
+        Returns: string;
+      };
       is_group_member: { Args: { p_group_id: string }; Returns: boolean };
       join_group_with_invite: { Args: { p_token_hash: string }; Returns: string };
       create_group_invite: {

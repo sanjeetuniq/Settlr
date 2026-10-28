@@ -169,6 +169,37 @@ create trigger on_group_created
   after insert on public.groups
   for each row execute function public.add_group_creator_as_member();
 
+create or replace function public.create_group(
+  p_name text,
+  p_currency text
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_user_id uuid := (select auth.uid());
+  v_group_id uuid;
+begin
+  if v_user_id is null then
+    raise exception 'A signed-in user is required to create a group';
+  end if;
+
+  if p_name is null
+    or char_length(trim(p_name)) not between 1 and 80
+    or p_currency not in ('INR', 'USD', 'EUR', 'GBP', 'CAD', 'AUD') then
+    raise exception 'Group details are invalid';
+  end if;
+
+  insert into public.groups (name, currency, created_by)
+  values (trim(p_name), p_currency, v_user_id)
+  returning id into v_group_id;
+
+  return v_group_id;
+end;
+$$;
+
 create or replace function public.enforce_group_member_limit()
 returns trigger
 language plpgsql
@@ -617,6 +648,7 @@ create policy "Recipients read their reminders"
   using (recipient_id = (select auth.uid()));
 
 revoke all on function public.is_group_member(uuid) from public, anon;
+revoke all on function public.create_group(text, text) from public, anon;
 revoke all on function public.join_group_with_invite(text) from public, anon;
 revoke all on function public.create_group_invite(uuid, text, timestamptz) from public, anon;
 revoke all on function public.revoke_group_invite(uuid) from public, anon;
@@ -628,6 +660,7 @@ revoke all on function public.mark_reminder_read(uuid) from public, anon;
 revoke all on function public.register_expense_attachment(uuid, text, text, text, integer) from public, anon;
 
 grant execute on function public.is_group_member(uuid) to authenticated;
+grant execute on function public.create_group(text, text) to authenticated;
 grant execute on function public.join_group_with_invite(text) to authenticated;
 grant execute on function public.create_group_invite(uuid, text, timestamptz) to authenticated;
 grant execute on function public.revoke_group_invite(uuid) to authenticated;

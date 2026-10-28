@@ -19,11 +19,15 @@ Passwords and authentication sessions are managed by Supabase Auth. SETTLR does 
 
 2. Copy `.env.example` to `.env.local` and set:
    - `NEXT_PUBLIC_SUPABASE_URL` to the project URL.
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` to the publishable/anon key.
+   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` to the Supabase publishable key (or `NEXT_PUBLIC_SUPABASE_ANON_KEY` if using a legacy anon key).
    - `NEXT_PUBLIC_SITE_URL` to the app origin (`http://localhost:3000` locally).
+   - `DATABASE_URL` to the transaction-mode pooler connection for Prisma runtime and `DIRECT_URL` to the session-mode pooler for Prisma CLI operations. Replace the password placeholders locally, percent-encoding special characters; do not commit real connection strings.
+   - `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and `SUPABASE_JWKS_URL` for server-side handlers using `@supabase/server`.
+   - `SUPABASE_SECRET_KEY` to a server-only Supabase secret key. Never expose it to browser code or commit it.
    - `SUPABASE_SERVICE_ROLE_KEY` to the server-only service role key. Receipt uploads are signature-checked on the server before this key is used. It must never be exposed to browser code or committed.
 
-3. Apply [`supabase/migrations/20261028000000_initial_schema.sql`](./supabase/migrations/20261028000000_initial_schema.sql) in the Supabase SQL Editor (or with the Supabase CLI). It creates the tables, auth profile trigger, RLS policies, transactional RPCs, and private receipt bucket.
+3. Apply [`supabase/migrations/20261028000000_initial_schema.sql`](./supabase/migrations/20261028000000_initial_schema.sql) in the Supabase SQL Editor (or with the Supabase CLI). It creates the tables, auth profile trigger, RLS policies, transactional RPCs, and private receipt bucket, including the authenticated `create_group` RPC. If the schema was already applied, apply the `create_group` function and its revoke/grant statements from the migration before using group creation.
+   If the dashboard reports that `public.groups` is unavailable, apply this migration and confirm the `public` schema is exposed through the Data API.
 
 4. In Supabase Auth settings, set the site URL to `NEXT_PUBLIC_SITE_URL` and add these redirect URLs:
    - `http://localhost:3000/auth/callback`
@@ -38,6 +42,10 @@ Passwords and authentication sessions are managed by Supabase Auth. SETTLR does 
    ```
 
    Open `http://localhost:3000`.
+
+## Prisma
+
+Prisma is configured for PostgreSQL with transaction-mode pooling for runtime connections and session-mode pooling for CLI operations. Replace `YOUR_PERCENT_ENCODED_PASSWORD` in `.env.local` before connecting. The current schema is intentionally empty until the Supabase database schema has been applied; use `npx prisma db pull` to introspect the existing database before using Prisma models. Do not run `prisma migrate dev` against the existing Supabase schema without first establishing a Prisma migration baseline.
 
 ## Product and data rules
 

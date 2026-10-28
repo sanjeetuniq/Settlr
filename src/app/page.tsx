@@ -24,6 +24,8 @@ const errorMessages: Record<string, string> = {
   "invite-revoke": "Invite link could not be revoked.",
   "group-details": "Give your group a name and choose a supported currency.",
   "group-create": "Your group could not be created. Please try again.",
+  "group-create-rpc-setup":
+    "Group creation needs the latest create_group database function. Apply its SQL from the project migration in Supabase, then try again.",
   "invite-invalid": "That invite is invalid, expired, revoked, or the group is full.",
   "settlement-details": "Enter a valid settlement amount and group members.",
   "settlement-save": "Settlement could not be recorded. Check the current balance.",
@@ -174,10 +176,46 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
   }
   if (!user) return <Landing inviteToken={inviteToken} configured />;
 
+  const { data: todosData, error: todosError } = await supabase
+    .from("todos")
+    .select("id, name");
+  const todosUnavailable = todosError?.code === "PGRST205";
+  if (todosError && !todosUnavailable) {
+    console.error("Todo list query failed:", todosError.message);
+    throw new Error("Your todos could not be loaded.");
+  }
+  if (todosUnavailable) {
+    console.warn(
+      "Todo list unavailable: public.todos was not found by the Supabase Data API. Confirm the table exists and is exposed.",
+    );
+  }
+  const todos = todosData ?? [];
+
   const { data: groups, error: groupsError } = await supabase
     .from("groups")
     .select("id, name, currency, created_by, created_at")
     .order("created_at", { ascending: false });
+  if (groupsError?.code === "PGRST205") {
+    console.error(
+      "Group table unavailable: public.groups was not found by the Supabase Data API.",
+    );
+    return (
+      <main className="error-shell">
+        <section className="error-card" role="status">
+          <span className="empty-illustration">✳</span>
+          <div className="eyebrow">DATABASE SETUP NEEDED</div>
+          <h1>Your workspace isn’t set up yet.</h1>
+          <p>
+            Supabase cannot find <code>public.groups</code>. Apply the included
+            initial schema migration in the Supabase SQL Editor, then refresh.
+            If the table already exists, make sure the <code>public</code> schema
+            is exposed through the Data API.
+          </p>
+          <Link className="button button-primary" href="/">Try again</Link>
+        </section>
+      </main>
+    );
+  }
   if (groupsError) {
     console.error("Group list query failed:", groupsError.message);
     throw new Error("Your groups could not be loaded. Please refresh the page.");
@@ -742,6 +780,25 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
                 <small className="form-hint">Up to 40 members · invite links expire in 7 days</small>
               </form>
             </section>
+          </section>
+          <section aria-labelledby="todos-heading" className="panel todos-panel">
+            <div className="panel-heading">
+              <div>
+                <div className="eyebrow">YOUR LIST</div>
+                <h2 id="todos-heading">Todos</h2>
+              </div>
+            </div>
+            {todosUnavailable ? (
+              <p className="muted" role="status">
+                Todos are unavailable. Confirm the public.todos table exists and is exposed through the Supabase Data API.
+              </p>
+            ) : (
+              <ul className="todos-list">
+                {todos.map((todo) => (
+                  <li key={todo.id}>{todo.name}</li>
+                ))}
+              </ul>
+            )}
           </section>
           <footer className="app-footer">
             <span>SETTLR · good company, clear balances</span>
