@@ -1,5 +1,5 @@
-import Link from "next/link";
 import { AuthForm } from "@/components/auth-form";
+import { AuthBrand } from "@/components/auth-brand";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 
 export default async function SignUpPage({
@@ -10,10 +10,7 @@ export default async function SignUpPage({
   const { next } = await searchParams;
   return (
     <main className="auth-shell">
-      <Link className="brand brand-dark" href="/">
-        <span aria-hidden="true" className="brand-mark">S</span>
-        SETTLR
-      </Link>
+      <AuthBrand />
       <section className="auth-card">
         <div className="eyebrow">A LITTLE LESS AWKWARD</div>
         <h1>Good times, clear tabs.</h1>
@@ -30,7 +27,10 @@ export default async function SignUpPage({
           nextPath={next}
         />
       </section>
-      <p className="auth-footnote">Private by default. Your group, your numbers.</p>
+      <p className="auth-footnote">
+        Private by default. Your group, your numbers. ·{" "}
+        <a href="mailto:helpdesk_settlr@gmail.com">Need help?</a>
+      </p>
     </main>
   );
 }

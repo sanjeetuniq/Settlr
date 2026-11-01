@@ -3,7 +3,10 @@
 import { createClient } from "@/lib/supabase/server";
 import { safeRedirectPath } from "@/lib/safe-redirect";
 import { getSiteUrl } from "@/lib/site-url";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { randomInt } from "node:crypto";
+import { friendshipQuotes } from "@/lib/friendship-quotes";
 
 export type AuthState = {
   error?: string;
@@ -58,7 +61,7 @@ export async function signUp(
     password,
     options: {
       data: { display_name: displayName },
-      emailRedirectTo: `${siteUrl}/auth/callback?next=${encodeURIComponent(nextPath)}`,
+      emailRedirectTo: `${siteUrl}/auth/callback?flow=signup&next=${encodeURIComponent(nextPath)}`,
     },
   });
   if (error) {
@@ -66,9 +69,9 @@ export async function signUp(
     return { error: "We couldn't create your account. Check the details and try again." };
   }
   if (!data.session) {
-    return {
-      success: "Check your inbox to confirm your email and finish creating your account.",
-    };
+    redirect(
+      `/sign-in?notice=verify-email&next=${encodeURIComponent(nextPath)}`,
+    );
   }
 
   redirect(nextPath);
@@ -87,10 +90,16 @@ export async function requestPasswordReset(
   if (!siteUrl) return { error: "Set NEXT_PUBLIC_SITE_URL before requesting a reset." };
   const supabase = await createClient();
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${siteUrl}/auth/callback?next=/reset-password`,
+    redirectTo: `${siteUrl}/auth/callback?flow=recovery&next=/reset-password`,
   });
   if (error) {
     console.error("Password reset request failed:", error.message);
+    if (/email.*rate limit|rate limit.*email/i.test(error.message)) {
+      return {
+        error:
+          "Supabase has temporarily limited reset emails. Please wait before retrying; the built-in email service allows 2 emails per hour. Custom SMTP can provide a higher limit.",
+      };
+    }
     return { error: "We couldn't send a reset email. Check your address and try again." };
   }
 
@@ -121,7 +130,47 @@ export async function updatePassword(
     return { error: "Password could not be updated. Request a new reset link." };
   }
 
-  redirect("/");
+  const { error: signOutError } = await supabase.auth.signOut({ scope: "local" });
+  if (signOutError) {
+    console.error("Password reset session sign-out failed:", signOutError.message);
+  }
+  redirect("/sign-in?notice=password-updated");
+}
+
+export async function setInvitePassword(
+  _previousState: AuthState,
+  formData: FormData,
+): Promise<AuthState> {
+  const password = String(formData.get("password") ?? "");
+  const nextPath = safeRedirectPath(String(formData.get("next") ?? ""));
+  const nextUrl = new URL(nextPath, "https://settlr.invalid");
+  const inviteToken = nextUrl.searchParams.get("invite");
+
+  if (
+    nextUrl.pathname !== "/" ||
+    !inviteToken ||
+    !/^[0-9a-f]{64}$/.test(inviteToken)
+  ) {
+    return { error: "This group invitation link is invalid. Ask the group creator to send another." };
+  }
+  if (password.length < 12 || password.length > 72) {
+    return { error: "Use a password between 12 and 72 characters." };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+  if (authError || !user) return { error: "Open the invitation email link first." };
+
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) {
+    console.error("Invited user password setup failed:", error.message);
+    return { error: "Password could not be saved. Open the invitation email link again." };
+  }
+
+  redirect(nextPath);
 }
 
 export async function signOut() {
@@ -131,5 +180,25 @@ export async function signOut() {
     console.error("Supabase sign-out failed:", error.message);
     throw new Error("We couldn't sign you out. Please try again.");
   }
-  redirect("/sign-in");
+
+  const cookieStore = await cookies();
+  const lastQuoteIndex = Number(cookieStore.get("settlr-last-logout-quote")?.value);
+  const quoteIndex =
+    Number.isInteger(lastQuoteIndex) &&
+    lastQuoteIndex >= 0 &&
+    lastQuoteIndex < friendshipQuotes.length
+      ? (() => {
+          const next = randomInt(friendshipQuotes.length - 1);
+          return next >= lastQuoteIndex ? next + 1 : next;
+        })()
+      : randomInt(friendshipQuotes.length);
+
+  cookieStore.set("settlr-last-logout-quote", String(quoteIndex), {
+    httpOnly: true,
+    maxAge: 60 * 60 * 24 * 90,
+    path: "/",
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+  });
+  redirect(`/signed-out?quote=${quoteIndex}`);
 }

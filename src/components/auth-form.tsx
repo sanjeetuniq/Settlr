@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useActionState } from "react";
 import { signIn, signUp, type AuthState } from "@/app/auth/actions";
+import { PendingButton } from "@/components/pending-button";
 
 const initialState: AuthState = {};
 
@@ -59,15 +60,13 @@ export function AuthForm({
       {state.success && (
         <p className="form-message form-success">{state.success}</p>
       )}
-      <button className="button button-primary auth-submit" disabled={pending || !enabled}>
-        {!enabled
-          ? "Supabase setup required"
-          : pending
-            ? "Please wait…"
-            : isSignUp
-              ? "Create your account"
-              : "Sign in"}
-      </button>
+      <PendingButton
+        className="button button-primary auth-submit"
+        disabled={pending || !enabled}
+        pendingLabel="Please wait…"
+      >
+        {!enabled ? "Supabase setup required" : isSignUp ? "Create your account" : "Sign in"}
+      </PendingButton>
       {!isSignUp && <Link className="forgot-link" href="/forgot-password">Forgot password?</Link>}
       <p className="auth-switch">
         {isSignUp ? "Already have an account?" : "New to SETTLR?"}{" "}

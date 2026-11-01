@@ -1,14 +1,12 @@
 import Link from "next/link";
+import { AuthBrand } from "@/components/auth-brand";
 import { PasswordResetRequestForm } from "@/components/password-reset-form";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 
 export default function ForgotPasswordPage() {
   return (
     <main className="auth-shell">
-      <Link className="brand brand-dark" href="/">
-        <span aria-hidden="true" className="brand-mark">S</span>
-        SETTLR
-      </Link>
+      <AuthBrand />
       <section className="auth-card">
         <div className="eyebrow">ACCOUNT RECOVERY</div>
         <h1>Forgot your password?</h1>
@@ -21,7 +19,10 @@ export default function ForgotPasswordPage() {
         )}
         <PasswordResetRequestForm enabled={isSupabaseConfigured()} />
       </section>
-      <p className="auth-footnote"><Link href="/sign-in">Back to sign in</Link></p>
+      <p className="auth-footnote">
+        <Link href="/sign-in">Back to sign in</Link> ·{" "}
+        <a href="mailto:helpdesk_settlr@gmail.com">Support</a>
+      </p>
     </main>
   );
 }

@@ -1,28 +1,41 @@
-import Link from "next/link";
 import { AuthForm } from "@/components/auth-form";
+import { AuthBrand } from "@/components/auth-brand";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 
 export default async function SignInPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string; error?: string }>;
+  searchParams: Promise<{ next?: string; error?: string; notice?: string }>;
 }) {
-  const { next, error } = await searchParams;
+  const { next, error, notice } = await searchParams;
   return (
     <main className="auth-shell">
-      <Link className="brand brand-dark" href="/">
-        <span aria-hidden="true" className="brand-mark">S</span>
-        SETTLR
-      </Link>
+      <AuthBrand />
+      <div className="auth-tagline">
+        <span>GOOD COMPANY, CLEAR BALANCES</span>
+        <strong>Split the bills &amp; Keep the bond with love &lt;3</strong>
+      </div>
       <section className="auth-card">
         <div className="eyebrow">WELCOME BACK</div>
         <h1>Good to see you.</h1>
         <p className="muted">Pick up where your group left off.</p>
+        {notice === "verify-email" && (
+          <p className="form-message form-success">
+            Account created. Verify your email using the link we sent, then sign in here.
+          </p>
+        )}
+        {notice === "email-verified" && (
+          <p className="form-message form-success">
+            Email verified. Please sign in to continue.
+          </p>
+        )}
+        {notice === "password-updated" && (
+          <p className="form-message form-success">
+            Password updated. Sign in with your new password.
+          </p>
+        )}
         {error === "auth-callback" && (
           <p className="form-message form-error">That sign-in link has expired or could not be verified. Request a fresh link and try again.</p>
-        )}
-        {error === "session" && (
-          <p className="form-message form-error">Your session could not be refreshed. Please sign in again.</p>
         )}
         {!isSupabaseConfigured() && (
           <p className="setup-notice">
@@ -36,7 +49,10 @@ export default async function SignInPage({
           nextPath={next}
         />
       </section>
-      <p className="auth-footnote">Private by default. Your group, your numbers.</p>
+      <p className="auth-footnote">
+        Private by default. Your group, your numbers. ·{" "}
+        <a href="mailto:helpdesk_settlr@gmail.com">Need help?</a>
+      </p>
     </main>
   );
 }

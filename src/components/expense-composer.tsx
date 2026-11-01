@@ -9,10 +9,14 @@ type Member = { id: string; name: string };
 
 export function ExpenseComposer({
   groupId,
+  currentUserId,
   members,
+  firstExpenseStep = false,
 }: {
   groupId: string;
+  currentUserId: string;
   members: Member[];
+  firstExpenseStep?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -20,6 +24,10 @@ export function ExpenseComposer({
   const [statusMessage, setStatusMessage] = useState("");
   const [category, setCategory] = useState("Food");
   const [splitMode, setSplitMode] = useState<"equal" | "custom">("equal");
+  const defaultPayerId = members.some((member) => member.id === currentUserId)
+    ? currentUserId
+    : members[0]?.id ?? "";
+  const [payerId, setPayerId] = useState(defaultPayerId);
   const [participants, setParticipants] = useState<string[]>(members.map((m) => m.id));
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
   const [receipt, setReceipt] = useState<File | null>(null);
@@ -27,6 +35,8 @@ export function ExpenseComposer({
     expenseId: string;
     file: File;
   } | null>(null);
+  const today = new Date();
+  const localToday = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 
   async function uploadReceipt(expenseId: string, file: File) {
     const uploadData = new FormData();
@@ -123,7 +133,11 @@ export function ExpenseComposer({
       setErrorMessage("");
       setStatusMessage("Expense added. Your group balances are up to date.");
       setReceipt(null);
-      router.refresh();
+      if (firstExpenseStep) {
+        router.replace(`/?group=${groupId}&notice=group-first-expense`);
+      } else {
+        router.refresh();
+      }
     });
   }
 
@@ -135,65 +149,8 @@ export function ExpenseComposer({
     );
   }
 
-  return (
-    <form action={submit} className="stack-form">
-      <div className="form-row">
-        <label className="field-grow">
-          What was it for?
-          <input
-            maxLength={120}
-            name="description"
-            placeholder="Dinner after the hike"
-            required
-          />
-        </label>
-        <label className="field-amount">
-          Total
-          <input
-            inputMode="decimal"
-            name="amount"
-            placeholder="0.00"
-            required
-            step="0.01"
-            type="number"
-            min="0.01"
-          />
-        </label>
-      </div>
-      <div className="form-row">
-        <label className="field-grow">
-          Paid by
-          <select name="payerId" required>
-            {members.map((member) => (
-              <option key={member.id} value={member.id}>
-                {member.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field-grow">
-          Category
-          <select
-            name="category"
-            onChange={(event) => setCategory(event.target.value)}
-            value={category}
-          >
-            {["Food", "Transport", "Stay", "Utilities", "Other"].map((item) => (
-              <option key={item}>{item}</option>
-            ))}
-          </select>
-        </label>
-        <label className="field-date">
-          Date
-          <input
-            defaultValue={new Date().toISOString().slice(0, 10)}
-            name="spentAt"
-            required
-            type="date"
-          />
-        </label>
-      </div>
-      <fieldset className="participant-fieldset">
+  const participantSelector = (
+    <fieldset className="participant-fieldset">
         <legend>Split between</legend>
         <div className="participant-list">
           {members.map((member) => {
@@ -227,45 +184,192 @@ export function ExpenseComposer({
             );
           })}
         </div>
-      </fieldset>
-      <div className="form-row form-row-bottom">
-        <div className="split-toggle" role="group" aria-label="Split type">
-          <button
-            aria-pressed={splitMode === "equal"}
-            className={splitMode === "equal" ? "toggle-active" : ""}
-            onClick={() => setSplitMode("equal")}
-            type="button"
-          >
-            Split equally
-          </button>
-          <button
-            aria-pressed={splitMode === "custom"}
-            className={splitMode === "custom" ? "toggle-active" : ""}
-            onClick={() => setSplitMode("custom")}
-            type="button"
-          >
-            Custom amounts
-          </button>
-        </div>
-        <label className="receipt-field">
-          <span>Receipt (PNG/PDF, max 5 MB)</span>
+    </fieldset>
+  );
+
+  return (
+    <form action={submit} className={`stack-form ${firstExpenseStep ? "first-expense-form" : ""}`}>
+        {firstExpenseStep ? (
+          <>
+            <label className="first-expense-amount">
+              How much was it?
+              <input
+                autoFocus
+                inputMode="decimal"
+                name="amount"
+                placeholder="0.00"
+                required
+                step="0.01"
+                type="number"
+                min="0.01"
+              />
+            </label>
+            {participantSelector}
+            <label>
+              What was it for?
+              <input
+                maxLength={120}
+                name="description"
+                placeholder="Dinner after the hike"
+                required
+              />
+            </label>
+          </>
+        ) : (
+          <div className="form-row">
+          <label className="field-grow">
+            What was it for?
           <input
-            accept="image/png,application/pdf"
-            onChange={(event) => {
-              const file = event.target.files?.[0] ?? null;
-              if (file && file.size > 5 * 1024 * 1024) {
-                setErrorMessage("Receipts must be 5 MB or smaller.");
-                setReceipt(null);
-                event.currentTarget.value = "";
-                return;
-              }
-              setErrorMessage("");
-              setReceipt(file);
-            }}
-            type="file"
+            maxLength={120}
+            name="description"
+            placeholder="Dinner after the hike"
+            required
           />
         </label>
-      </div>
+        <label className="field-amount">
+          Total
+          <input
+            inputMode="decimal"
+            name="amount"
+            placeholder="0.00"
+            required
+            step="0.01"
+            type="number"
+            min="0.01"
+          />
+        </label>
+        </div>
+      )}
+      <details className="expense-options">
+        <summary className="expense-options-summary">
+          <span>
+            <strong>
+              Paid by {members.find((member) => member.id === payerId)?.name ?? "a group member"}
+            </strong>
+            <small>
+              {splitMode === "equal" ? "Split equally" : "Custom split"} ·{" "}
+              {participants.length === members.length
+                ? `everyone (${participants.length})`
+                : `${participants.length} ${participants.length === 1 ? "person" : "people"}`}
+            </small>
+          </span>
+          <span className="expense-options-action">Change</span>
+        </summary>
+        <div className="expense-options-content">
+          {!firstExpenseStep && participantSelector}
+          <div className="form-row">
+            <label className="field-grow">
+              Paid by
+              <select
+                name="payerId"
+                onChange={(event) => setPayerId(event.target.value)}
+                required
+                value={payerId}
+              >
+                {members.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {member.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field-grow">
+              Category
+              <select
+                name="category"
+                onChange={(event) => setCategory(event.target.value)}
+                value={category}
+              >
+                {["Food", "Transport", "Stay", "Utilities", "Other"].map((item) => (
+                  <option key={item}>{item}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field-date">
+              Date
+              <input
+                defaultValue={localToday}
+                name="spentAt"
+                required
+                type="date"
+              />
+            </label>
+          </div>
+          <fieldset className="participant-fieldset">
+            <legend>Split between</legend>
+            <div className="participant-list">
+              {members.map((member) => {
+                const selected = participants.includes(member.id);
+                return (
+                  <div className="participant-row" key={member.id}>
+                    <label className="check-label">
+                      <input
+                        checked={selected}
+                        onChange={() => toggleParticipant(member.id)}
+                        type="checkbox"
+                      />
+                      <span>{member.name}</span>
+                    </label>
+                    {selected && splitMode === "custom" && (
+                      <input
+                        aria-label={`${member.name}'s share`}
+                        className="share-input"
+                        inputMode="decimal"
+                        onChange={(event) =>
+                          setCustomAmounts((current) => ({
+                            ...current,
+                            [member.id]: event.target.value,
+                          }))
+                        }
+                        placeholder="0.00"
+                        value={customAmounts[member.id] ?? ""}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </fieldset>
+          <div className="form-row form-row-bottom">
+            <div className="split-toggle" role="group" aria-label="Split type">
+              <button
+                aria-pressed={splitMode === "equal"}
+                className={splitMode === "equal" ? "toggle-active" : ""}
+                onClick={() => setSplitMode("equal")}
+                type="button"
+              >
+                Split equally
+              </button>
+              <button
+                aria-pressed={splitMode === "custom"}
+                className={splitMode === "custom" ? "toggle-active" : ""}
+                onClick={() => setSplitMode("custom")}
+                type="button"
+              >
+                Custom amounts
+              </button>
+            </div>
+            <label className="receipt-field">
+              <span>Receipt (PNG/PDF, max 5 MB)</span>
+              <input
+                accept="image/png,application/pdf"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  if (file && file.size > 5 * 1024 * 1024) {
+                    setErrorMessage("Receipts must be 5 MB or smaller.");
+                    setReceipt(null);
+                    event.currentTarget.value = "";
+                    return;
+                  }
+                  setErrorMessage("");
+                  setReceipt(file);
+                }}
+                type="file"
+              />
+            </label>
+          </div>
+        </div>
+      </details>
       {receipt && <p className="file-selected">{receipt.name}</p>}
       {receiptToRetry && (
         <div className="receipt-retry">
@@ -322,6 +426,14 @@ export function ExpenseComposer({
       <button className="button button-primary" disabled={pending || Boolean(receiptToRetry)}>
         {pending ? "Saving expense…" : "Add expense"}
       </button>
+      {pending && (
+        <div aria-live="polite" className="processing-backdrop" role="status">
+          <div className="processing-card">
+            <span aria-hidden="true" className="processing-spinner" />
+            <span>Saving your expense…</span>
+          </div>
+        </div>
+      )}
     </form>
   );
 }

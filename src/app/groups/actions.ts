@@ -5,11 +5,23 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { CURRENCIES, parseAmountToMinorUnits } from "@/lib/money";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getSiteUrl } from "@/lib/site-url";
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export type InviteState = { link?: string; inviteId?: string; error?: string };
+export type PeopleSearchState = {
+  query?: string;
+  people?: {
+    id: string;
+    display_name: string;
+    email: string | null;
+    is_member: boolean;
+  }[];
+  error?: string;
+};
+export type EmailInviteState = { email?: string; success?: string; error?: string };
 
 function goWithError(code: string): never {
   redirect(`/?error=${encodeURIComponent(code)}`);
@@ -56,7 +68,54 @@ export async function createGroup(formData: FormData) {
   }
 
   revalidatePath("/");
-  redirect(`/?group=${groupId}&notice=group-created`);
+  redirect(`/?group=${groupId}&step=first-expense&notice=group-created`);
+}
+
+export async function archiveGroup(formData: FormData) {
+  const groupId = String(formData.get("groupId") ?? "");
+  if (!uuidPattern.test(groupId)) goWithError("group-archive");
+
+  const { supabase } = await getSignedInClient();
+  const { error } = await supabase.rpc("archive_group", {
+    p_group_id: groupId,
+  });
+  if (error) {
+    console.error("Group archive failed:", error.message);
+    if (["PGRST202", "42883"].includes(error.code)) {
+      goWithError("group-archive-setup");
+    }
+    if (error.message.includes("balances are settled")) {
+      goWithError("group-not-settled");
+    }
+    goWithError("group-archive");
+  }
+
+  revalidatePath("/");
+  redirect(`/?group=${groupId}&notice=group-archived`);
+}
+
+export async function setGroupPublic(formData: FormData) {
+  const groupId = String(formData.get("groupId") ?? "");
+  const isPublic = String(formData.get("isPublic") ?? "");
+  if (!uuidPattern.test(groupId) || !["true", "false"].includes(isPublic)) {
+    goWithError("group-visibility");
+  }
+
+  const { supabase } = await getSignedInClient();
+  const { error } = await supabase.rpc("set_group_public", {
+    p_group_id: groupId,
+    p_is_public: isPublic === "true",
+  });
+  if (error) {
+    console.error("Group visibility update failed:", error.message);
+    if (["PGRST202", "42883"].includes(error.code)) {
+      goWithError("group-visibility-setup");
+    }
+    goWithError("group-visibility");
+  }
+
+  revalidatePath("/");
+  redirect(`/?group=${groupId}&notice=${isPublic === "true" ? "group-opened" : "group-closed"}`);
 }
 
 export async function createInvite(
@@ -88,6 +147,161 @@ export async function createInvite(
   return {
     link: `${baseUrl}/?invite=${token}`,
     inviteId,
+  };
+}
+
+export async function searchInvitePeople(
+  _previousState: PeopleSearchState,
+  formData: FormData,
+): Promise<PeopleSearchState> {
+  const groupId = String(formData.get("groupId") ?? "");
+  const query = String(formData.get("query") ?? "").trim();
+  if (!uuidPattern.test(groupId)) return { query, error: "Select a valid group." };
+  if (query.length < 2 || query.length > 254) {
+    return { query, error: "Enter at least 2 characters to search." };
+  }
+
+  const { supabase } = await getSignedInClient();
+  const { data, error } = await supabase.rpc("search_group_invite_candidates", {
+    p_group_id: groupId,
+    p_query: query,
+  });
+  if (error) {
+    console.error("Invite people search failed:", error.message);
+    if (error.message.includes("Search rate limit exceeded")) {
+      return { query, error: "Too many searches in a short time. Wait a few minutes and try again." };
+    }
+    if (["PGRST202", "42883"].includes(error.code)) {
+      return { query, error: "Apply the group-invites migration to enable people search." };
+    }
+    return { query, error: "People could not be searched. Only the group creator can invite." };
+  }
+
+  return { query, people: data };
+}
+
+export async function inviteExistingPerson(formData: FormData) {
+  const groupId = String(formData.get("groupId") ?? "");
+  const userId = String(formData.get("userId") ?? "");
+  if (!uuidPattern.test(groupId) || !uuidPattern.test(userId)) {
+    goWithError("invite-person");
+  }
+
+  const { supabase } = await getSignedInClient();
+  const { data, error } = await supabase.rpc("invite_group_member", {
+    p_group_id: groupId,
+    p_user_id: userId,
+  });
+  if (error || !data) {
+    console.error("Existing SETTLR user invitation failed:", error?.message);
+    if (error?.message.includes("group is full")) goWithError("invite-group-full");
+    if (error && ["PGRST202", "42883"].includes(error.code)) {
+      goWithError("invite-people-setup");
+    }
+    goWithError("invite-person");
+  }
+
+  revalidatePath("/");
+  redirect(`/?group=${groupId}&notice=person-added`);
+}
+
+export async function sendEmailInvite(
+  _previousState: EmailInviteState,
+  formData: FormData,
+): Promise<EmailInviteState> {
+  const groupId = String(formData.get("groupId") ?? "");
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  if (!uuidPattern.test(groupId)) return { email, error: "Select a valid group." };
+  if (
+    email.length > 254 ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+  ) {
+    return { email, error: "Enter a valid email address." };
+  }
+
+  const { supabase, user } = await getSignedInClient();
+  if (user.email?.toLowerCase() === email) {
+    return { email, error: "You’re already a member of this group." };
+  }
+  const { data: matches, error: searchError } = await supabase.rpc(
+    "search_group_invite_candidates",
+    { p_group_id: groupId, p_query: email },
+  );
+  if (searchError) {
+    console.error("Email invitation account lookup failed:", searchError.message);
+    if (["PGRST202", "42883"].includes(searchError.code)) {
+      return { email, error: "Apply the group-invites migration to enable email invitations." };
+    }
+    return { email, error: "The address could not be checked for a SETTLR account." };
+  }
+
+  const existingPerson = matches.find(
+    (person) => person.email?.toLowerCase() === email,
+  );
+  if (existingPerson) {
+    if (existingPerson.is_member) {
+      return { email, error: "That person is already in this group." };
+    }
+    const { error } = await supabase.rpc("invite_group_member", {
+      p_group_id: groupId,
+      p_user_id: existingPerson.id,
+    });
+    if (error) {
+      console.error("Existing account invitation by email failed:", error.message);
+      if (error.message.includes("group is full")) {
+        return { email, error: "This group has reached its 40-person limit." };
+      }
+      return { email, error: "The SETTLR account could not be added to this group." };
+    }
+    revalidatePath("/");
+    return { email, success: "That SETTLR user has been added to the group." };
+  }
+
+  const baseUrl = getSiteUrl();
+  if (!baseUrl) return { email, error: "Set NEXT_PUBLIC_SITE_URL to send invitations." };
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    return {
+      email,
+      error: "Email invitations require the server-side Supabase service role key.",
+    };
+  }
+
+  const token = randomBytes(32).toString("hex");
+  const tokenHash = createHash("sha256").update(token).digest("hex");
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const { data: inviteId, error: inviteError } = await supabase.rpc(
+    "create_group_invite",
+    { p_group_id: groupId, p_token_hash: tokenHash, p_expires_at: expiresAt },
+  );
+  if (inviteError || !inviteId) {
+    console.error("Email group invite creation failed:", inviteError?.message);
+    return { email, error: "The group invitation could not be created." };
+  }
+
+  const nextPath = `/?invite=${token}`;
+  const admin = createAdminClient();
+  const { error: emailError } = await admin.auth.admin.inviteUserByEmail(email, {
+    redirectTo: `${baseUrl}/auth/callback?next=${encodeURIComponent(nextPath)}`,
+  });
+  if (emailError) {
+    console.error("Supabase Auth email invitation failed:", emailError.code);
+    const { error: revokeError } = await supabase.rpc("revoke_group_invite", {
+      p_invite_id: inviteId,
+    });
+    if (revokeError) {
+      console.error("Failed to revoke unused email invitation:", revokeError.message);
+    }
+    return {
+      email,
+      error:
+        "The invitation email could not be sent. Check Supabase email delivery and the allowed redirect URLs.",
+    };
+  }
+
+  revalidatePath("/");
+  return {
+    email,
+    success: "Invitation email sent. They can set a password and join from the email link.",
   };
 }
 
@@ -127,6 +341,26 @@ export async function joinGroup(formData: FormData) {
 
   revalidatePath("/");
   redirect(`/?group=${groupId}&notice=joined-group`);
+}
+
+export async function joinOpenGroup(formData: FormData) {
+  const groupId = String(formData.get("groupId") ?? "");
+  if (!uuidPattern.test(groupId)) goWithError("group-join-invalid");
+
+  const { supabase } = await getSignedInClient();
+  const { data: joinedGroupId, error } = await supabase.rpc("join_open_group", {
+    p_group_id: groupId,
+  });
+  if (error || !joinedGroupId) {
+    if (error) console.error("Open group join failed:", error.message);
+    if (error && ["PGRST202", "42883"].includes(error.code)) {
+      goWithError("group-join-setup");
+    }
+    goWithError("group-join-failed");
+  }
+
+  revalidatePath("/");
+  redirect(`/?group=${joinedGroupId}&notice=joined-group`);
 }
 
 export async function createExpense(
