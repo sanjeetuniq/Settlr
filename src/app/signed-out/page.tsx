@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { BrandLogo } from "@/components/brand-logo";
 import { friendshipQuotes } from "@/lib/friendship-quotes";
 
 export default async function SignedOutPage({
@@ -19,14 +20,7 @@ export default async function SignedOutPage({
   return (
     <main className="signed-out-page">
       <Link aria-label="Settlr home" className="signed-out-brand" href="/sign-in">
-        <Image
-          alt="Settlr"
-          height={1254}
-          priority
-          sizes="82px"
-          src="/settlr-logo.png"
-          width={1254}
-        />
+        <BrandLogo priority sizes="82px" />
       </Link>
       <section className="signed-out-card">
         <div className="signed-out-art">
@@ -42,7 +36,7 @@ export default async function SignedOutPage({
         </div>
         <div className="signed-out-copy">
           <div className="eyebrow">UNTIL THE NEXT GET-TOGETHER</div>
-          <h1>Signed out, still in good company.</h1>
+          <h1>Signed out, until next time.</h1>
           <blockquote>“{selectedQuote}”</blockquote>
           <p>
             Your next shared expense is always easier with everyone in the
@@ -53,7 +47,7 @@ export default async function SignedOutPage({
           </Link>
         </div>
       </section>
-      <p className="signed-out-footnote">Split bills. Keep the bond.</p>
+      <p className="signed-out-footnote">SETTLES SETTLEMENTS IN STYLE 😉</p>
     </main>
   );
 }

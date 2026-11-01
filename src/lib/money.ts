@@ -1,24 +1,50 @@
-export const CURRENCIES = ["INR", "USD", "EUR", "GBP", "CAD", "AUD"] as const;
+export const CURRENCIES = [
+  "INR",
+  "USD",
+  "EUR",
+  "GBP",
+  "CAD",
+  "AUD",
+  "JPY",
+  "CHF",
+  "SGD",
+  "HKD",
+  "NZD",
+] as const;
 export type Currency = (typeof CURRENCIES)[number];
 
-export function parseAmountToMinorUnits(input: string): number | null {
+export function currencyMinorUnitScale(currency: string) {
+  return currency === "JPY" ? 1 : 100;
+}
+
+export function parseAmountToMinorUnits(
+  input: string,
+  currency = "INR",
+): number | null {
   const value = input.trim();
-  const match = /^(\d{1,10})(?:\.(\d{1,2}))?$/.exec(value);
+  const scale = currencyMinorUnitScale(currency);
+  const match =
+    scale === 1
+      ? /^(\d{1,12})$/.exec(value)
+      : /^(\d{1,10})(?:\.(\d{1,2}))?$/.exec(value);
   if (!match) return null;
 
   const whole = Number(match[1]);
-  const fraction = Number((match[2] ?? "").padEnd(2, "0"));
-  const amount = whole * 100 + fraction;
+  const fraction =
+    scale === 1 ? 0 : Number((match[2] ?? "").padEnd(2, "0"));
+  const amount = whole * scale + fraction;
   return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
 }
 
 export function formatMoney(minorUnits: number, currency: string) {
+  const scale = currencyMinorUnitScale(currency);
+  const fractionDigits = scale === 1 ? 0 : 2;
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
     currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(minorUnits / 100);
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  }).format(minorUnits / scale);
 }
 
 export function splitEvenly(totalMinor: number, userIds: string[]) {

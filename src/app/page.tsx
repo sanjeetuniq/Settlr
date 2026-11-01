@@ -1,7 +1,6 @@
-import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import dashboardLogo from "../../Images/Logo.png";
+import { BrandLogo } from "@/components/brand-logo";
 import { ExpenseComposer } from "@/components/expense-composer";
 import { InviteForm } from "@/components/invite-form";
 import { TransactionHistory } from "@/components/transaction-history";
@@ -475,7 +474,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
       <main className="invite-join-page">
         <div className="invite-join-card">
           <Link className="brand brand-dark" href="/">
-            <span aria-hidden="true" className="brand-mark">S</span>SETTLR
+            <BrandLogo sizes="138px" />
           </Link>
           <div className="eyebrow">YOU’RE INVITED</div>
           <h1>There’s room at the table.</h1>
@@ -502,7 +501,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
     <main className="app-frame">
       <aside className="sidebar">
         <Link className="brand brand-dark" href="/">
-          <span aria-hidden="true" className="brand-mark">S</span>SETTLR
+          <BrandLogo sizes="158px" />
         </Link>
         <div className="sidebar-section-label">YOUR SPACE</div>
         <Link
@@ -579,15 +578,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
               ♧{unreadCount > 0 && <span className="notification-dot" />}
             </a>
             <Link aria-label="SETTLR dashboard" className="dashboard-logo-link" href="/">
-              <Image
-                alt="SETTLR"
-                className="dashboard-logo"
-                height={1254}
-                priority
-                sizes="42px"
-                src={dashboardLogo}
-                width={1254}
-              />
+              <BrandLogo className="dashboard-logo" priority sizes="42px" />
             </Link>
             <details className="account-menu">
               <summary aria-label="Open account menu" className="user-chip">
@@ -659,10 +650,10 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
           {params.step === "first-expense" && selectedGroup && !isSelectedGroupArchived && (
             <section className="panel first-expense-panel" id="first-expense-step">
               <div className="panel-heading">
-                <div>
-                  <div className="eyebrow">STEP 1 · START SHARING</div>
-                  <h2>Add your first expense</h2>
-                </div>
+                  <div>
+                    <div className="eyebrow">STEP 1 · START SHARING</div>
+                    <h2>Add your first expense · {selectedGroup.name}</h2>
+                  </div>
                 <Link className="button button-text button-small" href={`/?group=${selectedGroup.id}`}>
                   Do this later
                 </Link>
@@ -683,6 +674,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
               <ExpenseComposer
                 key={`first-${selectedGroup.id}`}
                 currentUserId={user.id}
+                currency={selectedGroup.currency}
                 firstExpenseStep
                 groupId={selectedGroup.id}
                 members={selectedGroup.members}
@@ -846,9 +838,11 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
                   {selectedGroup && !isSelectedGroupArchived ? (
                     <ExpenseComposer
                       key={selectedGroup.id}
-                      groupId={selectedGroup.id}
-                      currentUserId={user.id}
-                      members={selectedGroup.members}
+                groupId={selectedGroup.id}
+                currency={selectedGroup.currency}
+                currentUserId={user.id}
+                firstExpenseStep
+                members={selectedGroup.members}
                     />
                   ) : isSelectedGroupArchived ? (
                     <p className="muted">Archived groups are read-only. Their activity is preserved alongside this group.</p>
@@ -1100,7 +1094,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
             )}
           </section>
           <footer className="app-footer">
-            <span>SETTLR · good company, clear balances</span>
+            <span>SETTLR · SETTLES SETTLEMENTS IN STYLE 😉</span>
             <span>Amounts stored securely · {groupsWithNames.length} groups · <a href="mailto:helpdesk_settlr@gmail.com">Support</a></span>
           </footer>
         </div>

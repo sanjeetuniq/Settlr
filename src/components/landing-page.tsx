@@ -1,5 +1,6 @@
 import Link from "next/link";
 import Image from "next/image";
+import { BrandLogo } from "@/components/brand-logo";
 
 export function LandingPage({
   inviteToken,
@@ -14,9 +15,8 @@ export function LandingPage({
   return (
     <main className="landing-page">
       <header className="landing-nav">
-        <Link className="brand" href="/">
-          <span aria-hidden="true" className="brand-mark">S</span>
-          SETTLR
+        <Link aria-label="Settlr home" className="brand" href="/">
+          <BrandLogo className="landing-brand-logo" priority sizes="78px" />
         </Link>
         <nav>
           <Link className="nav-login" href={`/sign-in${next}`}>Sign in</Link>
@@ -28,10 +28,10 @@ export function LandingPage({
 
       <section className="landing-hero">
         <div className="hero-copy">
-          <div className="eyebrow"><span className="eyebrow-dot" /> GOOD COMPANY, NO GUESSWORK</div>
+          <div className="eyebrow"><span className="eyebrow-dot" /> SHARED PLANS, LESS MATH</div>
           <h1 className="landing-tagline">
-            <strong>Split bills.</strong>
-            <strong>Keep the bond.</strong>
+            <strong>Settles settlements</strong>
+            <strong>in style <span aria-hidden="true">😉</span></strong>
           </h1>
           <p>
             From dinner with friends to weekend getaways, keep the math simple
@@ -70,7 +70,7 @@ export function LandingPage({
             <div className="hero-photo-caption">
               <span aria-hidden="true">✦</span>
               <span>
-                <strong>Good company, good times</strong>
+                <strong>Shared plans, better memories</strong>
                 <small>Split the bill, not the moment.</small>
               </span>
             </div>
@@ -84,7 +84,7 @@ export function LandingPage({
         <div><span className="benefit-number">03</span><b>Less chasing, fewer transfers</b><small>Simple settle-up suggestions.</small></div>
       </section>
       <footer className="landing-footer">
-        <span>SETTLR © 2026</span><span>Good company. Clear balances.</span>
+        <span>SETTLR © 2026</span><span>SETTLES SETTLEMENTS IN STYLE 😉</span>
       </footer>
     </main>
   );

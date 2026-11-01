@@ -183,9 +183,7 @@ export async function searchInvitePeople(
 export async function inviteExistingPerson(formData: FormData) {
   const groupId = String(formData.get("groupId") ?? "");
   const userId = String(formData.get("userId") ?? "");
-  if (!uuidPattern.test(groupId) || !uuidPattern.test(userId)) {
-    goWithError("invite-person");
-  }
+  if (!uuidPattern.test(groupId) || !uuidPattern.test(userId)) goWithError("invite-person");
 
   const { supabase } = await getSignedInClient();
   const { data, error } = await supabase.rpc("invite_group_member", {
@@ -205,6 +203,22 @@ export async function inviteExistingPerson(formData: FormData) {
   redirect(`/?group=${groupId}&notice=person-added`);
 }
 
+export async function inviteExistingPeople(formData: FormData) {
+  const groupId = String(formData.get("groupId") ?? "");
+  const userIds = formData.getAll("userId").map(String);
+  if (!uuidPattern.test(groupId)) goWithError("invite-person");
+  const { supabase } = await getSignedInClient();
+  for (const userId of userIds) {
+    if (!uuidPattern.test(userId)) continue;
+    const { error } = await supabase.rpc("invite_group_member", {
+      p_group_id: groupId,
+      p_user_id: userId,
+    });
+    if (error) console.error("Existing SETTLR user invitation failed:", error.message);
+  }
+  revalidatePath("/");
+  redirect(`/?group=${groupId}&notice=person-added`);
+}
 export async function sendEmailInvite(
   _previousState: EmailInviteState,
   formData: FormData,
@@ -259,7 +273,7 @@ export async function sendEmailInvite(
 
   const baseUrl = getSiteUrl();
   if (!baseUrl) return { email, error: "Set NEXT_PUBLIC_SITE_URL to send invitations." };
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  if (!process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return {
       email,
       error: "Email invitations require the server-side Supabase service role key.",
@@ -458,17 +472,30 @@ export async function recordSettlement(formData: FormData) {
   const groupId = String(formData.get("groupId") ?? "");
   const fromUserId = String(formData.get("fromUserId") ?? "");
   const toUserId = String(formData.get("toUserId") ?? "");
-  const amountMinor = parseAmountToMinorUnits(String(formData.get("amount") ?? ""));
   if (
     !uuidPattern.test(groupId) ||
     !uuidPattern.test(fromUserId) ||
-    !uuidPattern.test(toUserId) ||
-    amountMinor === null
+    !uuidPattern.test(toUserId)
   ) {
     goWithError("settlement-details");
   }
 
   const { supabase } = await getSignedInClient();
+  const { data: group, error: groupError } = await supabase
+    .from("groups")
+    .select("currency")
+    .eq("id", groupId)
+    .maybeSingle();
+  if (groupError || !group) {
+    if (groupError) console.error("Settlement currency lookup failed:", groupError.message);
+    goWithError("settlement-details");
+  }
+  const amountMinor = parseAmountToMinorUnits(
+    String(formData.get("amount") ?? ""),
+    group.currency,
+  );
+  if (amountMinor === null) goWithError("settlement-details");
+
   const { error } = await supabase.rpc("create_settlement", {
     p_group_id: groupId,
     p_from_user_id: fromUserId,

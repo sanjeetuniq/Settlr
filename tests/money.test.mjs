@@ -8,6 +8,10 @@ import {
 } from "../src/lib/money.ts";
 import { MAX_RECEIPT_BYTES, validateReceipt } from "../src/lib/receipt-validation.ts";
 import { safeRedirectPath } from "../src/lib/safe-redirect.ts";
+import {
+  getSupportedOtpType,
+  isSignupConfirmation,
+} from "../src/lib/auth-callback.ts";
 
 test("parses two-decimal amounts without floating point arithmetic", () => {
   assert.equal(parseAmountToMinorUnits("42"), 4200);
@@ -21,6 +25,15 @@ test("parses two-decimal amounts without floating point arithmetic", () => {
 test("formats minor units to exactly two decimal places", () => {
   assert.match(formatMoney(5, "INR"), /0\.05/);
   assert.match(formatMoney(1200, "USD"), /12\.00/);
+});
+
+test("accepts Supabase email OTP confirmation links", () => {
+  assert.equal(getSupportedOtpType("email"), "email");
+  assert.equal(getSupportedOtpType("signup"), "signup");
+  assert.equal(getSupportedOtpType("email_change"), null);
+  assert.equal(isSignupConfirmation(null, "email"), true);
+  assert.equal(isSignupConfirmation("signup", null), true);
+  assert.equal(isSignupConfirmation("recovery", "recovery"), false);
 });
 
 test("equal splits allocate remainder cents deterministically", () => {

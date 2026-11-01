@@ -242,10 +242,8 @@ export function ExpenseComposer({
       )}
       <details className="expense-options">
         <summary className="expense-options-summary">
-          <span>
-            <strong>
-              Paid by {members.find((member) => member.id === payerId)?.name ?? "a group member"}
-            </strong>
+            <span>
+              <strong>Review options</strong>
             <small>
               {splitMode === "equal" ? "Split equally" : "Custom split"} ·{" "}
               {participants.length === members.length

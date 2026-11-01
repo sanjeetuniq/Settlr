@@ -1,4 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
+import {
+  getSupportedOtpType,
+  isSignupConfirmation,
+} from "@/lib/auth-callback";
 import { createClient } from "@/lib/supabase/server";
 import { safeRedirectPath } from "@/lib/safe-redirect";
 
@@ -6,13 +10,9 @@ export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
   const tokenHash = request.nextUrl.searchParams.get("token_hash");
   const otpType = request.nextUrl.searchParams.get("type");
-  const supportedOtpType =
-    otpType === "signup" || otpType === "recovery" || otpType === "invite"
-      ? otpType
-      : null;
+  const supportedOtpType = getSupportedOtpType(otpType);
   const flow = request.nextUrl.searchParams.get("flow");
-  const isSignupConfirmation =
-    flow === "signup" || supportedOtpType === "signup";
+  const signupConfirmation = isSignupConfirmation(flow, supportedOtpType);
   const isRecovery = flow === "recovery" || supportedOtpType === "recovery";
   const isInvite = supportedOtpType === "invite";
   const nextPath = safeRedirectPath(
@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(new URL("/sign-in?error=auth-callback", request.url));
   }
 
-  if (isSignupConfirmation) {
+  if (signupConfirmation) {
     const { error: signOutError } = await supabase.auth.signOut({ scope: "local" });
     if (signOutError) {
       console.error("Signup confirmation sign-out failed:", signOutError.message);

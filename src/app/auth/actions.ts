@@ -77,6 +77,42 @@ export async function signUp(
   redirect(nextPath);
 }
 
+export async function resendSignupConfirmation(
+  _previousState: AuthState,
+  formData: FormData,
+): Promise<AuthState> {
+  const email = String(formData.get("email") ?? "").trim();
+  const nextPath = safeRedirectPath(String(formData.get("next") ?? "/"));
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { error: "Enter a valid email address." };
+  }
+
+  const siteUrl = getSiteUrl();
+  if (!siteUrl) {
+    return { error: "Set NEXT_PUBLIC_SITE_URL before requesting a new link." };
+  }
+
+  const supabase = await createClient();
+  const { error } = await supabase.auth.resend({
+    type: "signup",
+    email,
+    options: {
+      emailRedirectTo: `${siteUrl}/auth/callback?flow=signup&next=${encodeURIComponent(nextPath)}`,
+    },
+  });
+  if (error) {
+    console.error("Signup confirmation resend failed:", error.message);
+    return {
+      error: "We couldn't send a fresh verification link. Wait a bit and try again.",
+    };
+  }
+
+  return {
+    success:
+      "If that address has an unverified account, a fresh verification link is on its way.",
+  };
+}
+
 export async function requestPasswordReset(
   _previousState: AuthState,
   formData: FormData,

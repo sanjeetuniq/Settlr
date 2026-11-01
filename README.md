@@ -39,7 +39,15 @@ Password reset links return through the Auth callback using Supabase's recovery 
    - `http://localhost:3000/auth/callback`
    - Your deployed origin followed by `/auth/callback`
 
-   Email confirmation and password reset messages use Supabase Auth. If email confirmation is enabled, configure the Supabase confirmation email template to link to the app's `/auth/callback` route.
+   Email confirmation and password reset messages use Supabase Auth. In the **Confirm signup** email template, link directly to the app callback with the token hash so verification also works when the email is opened in another browser:
+
+   ```html
+   <a href="{{ .RedirectTo }}&amp;token_hash={{ .TokenHash }}&amp;type=email">
+     Confirm your email
+   </a>
+   ```
+
+   Keep the app's `/auth/callback` URL in the Supabase redirect allow list. If a link expires or has already been used, the sign-in page can send a fresh confirmation email.
 
 8. Apply [`supabase/migrations/20261029065014_whatsapp_notifications_and_transaction_history.sql`](./supabase/migrations/20261029065014_whatsapp_notifications_and_transaction_history.sql) to enable private WhatsApp preferences, phone verification, an asynchronous notification outbox, search throttling, and combined expense/settlement history. The dashboard shows 20 recent transactions across your groups and loads older entries with a stable timestamp/ID cursor. If this migration is not applied, the existing recent-expense list remains available.
 

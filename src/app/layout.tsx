@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "SETTLR — good company, clear balances",
+  title: "SETTLR — settles settlements in style",
   description:
     "Keep shared expenses, group balances, and settle-up suggestions together.",
 };

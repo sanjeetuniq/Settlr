@@ -13,7 +13,7 @@ export default async function SignUpPage({
       <AuthBrand />
       <section className="auth-card">
         <div className="eyebrow">A LITTLE LESS AWKWARD</div>
-        <h1>Good times, clear tabs.</h1>
+        <h1>Start with a shared plan.</h1>
         <p className="muted">Create an account to start sharing fairly.</p>
         {!isSupabaseConfigured() && (
           <p className="setup-notice">

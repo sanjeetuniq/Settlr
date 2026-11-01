@@ -1,5 +1,6 @@
 import { AuthForm } from "@/components/auth-form";
 import { AuthBrand } from "@/components/auth-brand";
+import { ResendConfirmationForm } from "@/components/resend-confirmation-form";
 import { isSupabaseConfigured } from "@/lib/supabase/server";
 
 export default async function SignInPage({
@@ -11,10 +12,6 @@ export default async function SignInPage({
   return (
     <main className="auth-shell">
       <AuthBrand />
-      <div className="auth-tagline">
-        <span>GOOD COMPANY, CLEAR BALANCES</span>
-        <strong>Split the bills &amp; Keep the bond with love &lt;3</strong>
-      </div>
       <section className="auth-card">
         <div className="eyebrow">WELCOME BACK</div>
         <h1>Good to see you.</h1>
@@ -35,7 +32,12 @@ export default async function SignInPage({
           </p>
         )}
         {error === "auth-callback" && (
-          <p className="form-message form-error">That sign-in link has expired or could not be verified. Request a fresh link and try again.</p>
+          <>
+            <p className="form-message form-error" role="alert">
+              That verification link may have expired or already been used. Request a fresh link below.
+            </p>
+            <ResendConfirmationForm nextPath={next} />
+          </>
         )}
         {!isSupabaseConfigured() && (
           <p className="setup-notice">
