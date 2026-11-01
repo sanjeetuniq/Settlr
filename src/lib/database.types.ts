@@ -21,8 +21,18 @@ export type Database = {
         { id?: number; name: string }
       >;
       profiles: Table<
-        { id: string; display_name: string; created_at: string },
-        { id: string; display_name: string; created_at?: string }
+        {
+          id: string;
+          display_name: string;
+          avatar_path: string | null;
+          created_at: string;
+        },
+        {
+          id: string;
+          display_name: string;
+          avatar_path?: string | null;
+          created_at?: string;
+        }
       >;
       groups: Table<
         {
@@ -105,6 +115,7 @@ export type Database = {
           amount_minor: number;
           created_by: string;
           created_at: string;
+          comment: string | null;
         },
         {
           id?: string;
@@ -113,6 +124,29 @@ export type Database = {
           to_user_id: string;
           amount_minor: number;
           created_by: string;
+          created_at?: string;
+          comment?: string | null;
+        }
+      >;
+      settlement_attachments: Table<
+        {
+          id: string;
+          settlement_id: string;
+          storage_path: string;
+          file_name: string;
+          content_type: string;
+          size_bytes: number;
+          uploaded_by: string;
+          created_at: string;
+        },
+        {
+          id?: string;
+          settlement_id: string;
+          storage_path: string;
+          file_name: string;
+          content_type: string;
+          size_bytes: number;
+          uploaded_by: string;
           created_at?: string;
         }
       >;
@@ -165,6 +199,7 @@ export type Database = {
           user_id: string;
           phone_e164: string | null;
           phone_verified_at: string | null;
+          phone_discoverable: boolean;
           opted_in_at: string | null;
           expense_alerts: boolean;
           invitation_alerts: boolean;
@@ -176,6 +211,7 @@ export type Database = {
           user_id: string;
           phone_e164?: string | null;
           phone_verified_at?: string | null;
+          phone_discoverable?: boolean;
           opted_in_at?: string | null;
           expense_alerts?: boolean;
           invitation_alerts?: boolean;
@@ -319,6 +355,20 @@ export type Database = {
           p_from_user_id: string;
           p_to_user_id: string;
           p_amount_minor: number;
+        };
+        Returns: string;
+      };
+      create_settlement_with_details: {
+        Args: {
+          p_group_id: string;
+          p_from_user_id: string;
+          p_to_user_id: string;
+          p_amount_minor: number;
+          p_comment: string | null;
+          p_attachment_path: string | null;
+          p_file_name: string | null;
+          p_content_type: string | null;
+          p_size_bytes: number | null;
         };
         Returns: string;
       };

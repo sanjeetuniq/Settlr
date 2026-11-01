@@ -92,9 +92,9 @@ export async function POST(request: NextRequest) {
     return errorResponse("The expense could not be verified.", 500);
   }
   if (!expense) return errorResponse("Expense not found or access denied.", 404);
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  if (!process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return errorResponse(
-      "Receipt storage is not configured. Add the server-only storage key.",
+      "Receipt storage is not configured. Add SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY on the server.",
       503,
     );
   }

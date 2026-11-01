@@ -157,7 +157,8 @@ export async function searchInvitePeople(
   const groupId = String(formData.get("groupId") ?? "");
   const query = String(formData.get("query") ?? "").trim();
   if (!uuidPattern.test(groupId)) return { query, error: "Select a valid group." };
-  if (query.length < 2 || query.length > 254) {
+  const isPhoneSearch = /^\+[1-9][0-9]{7,14}$/.test(query);
+  if ((!isPhoneSearch && query.length < 2) || query.length > 254) {
     return { query, error: "Enter at least 2 characters to search." };
   }
 
@@ -167,12 +168,29 @@ export async function searchInvitePeople(
     p_query: query,
   });
   if (error) {
-    console.error("Invite people search failed:", error.message);
+    console.error(
+      "Invite people search failed:",
+      JSON.stringify({
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+      }),
+    );
     if (error.message.includes("Search rate limit exceeded")) {
       return { query, error: "Too many searches in a short time. Wait a few minutes and try again." };
     }
+    if (error.message.includes("INSERT has more expressions than target columns")) {
+      return {
+        query,
+        error: "Apply the latest invite-search migration in Supabase, then try again.",
+      };
+    }
     if (["PGRST202", "42883"].includes(error.code)) {
       return { query, error: "Apply the group-invites migration to enable people search." };
+    }
+    if (isPhoneSearch && ["PGRST204", "42703"].includes(error.code)) {
+      return { query, error: "Apply the phone-search migration to find people by mobile number." };
     }
     return { query, error: "People could not be searched. Only the group creator can invite." };
   }
@@ -205,19 +223,52 @@ export async function inviteExistingPerson(formData: FormData) {
 
 export async function inviteExistingPeople(formData: FormData) {
   const groupId = String(formData.get("groupId") ?? "");
-  const userIds = formData.getAll("userId").map(String);
-  if (!uuidPattern.test(groupId)) goWithError("invite-person");
+  const submittedUserIds = formData.getAll("userId").map(String);
+  const userIds = Array.from(new Set(submittedUserIds));
+  if (
+    !uuidPattern.test(groupId) ||
+    userIds.length < 1 ||
+    userIds.length > 10 ||
+    userIds.some((userId) => !uuidPattern.test(userId))
+  ) {
+    goWithError("invite-person");
+  }
+
   const { supabase } = await getSignedInClient();
+  let addedCount = 0;
+  let failedCount = 0;
+  let groupFull = false;
   for (const userId of userIds) {
-    if (!uuidPattern.test(userId)) continue;
     const { error } = await supabase.rpc("invite_group_member", {
       p_group_id: groupId,
       p_user_id: userId,
     });
-    if (error) console.error("Existing SETTLR user invitation failed:", error.message);
+    if (error) {
+      console.error("Existing SETTLR user invitation failed:", error.message);
+      failedCount += 1;
+      if (error.message.includes("group is full")) {
+        groupFull = true;
+        failedCount += userIds.length - addedCount - failedCount;
+        break;
+      }
+      continue;
+    }
+    addedCount += 1;
   }
+
+  if (addedCount === 0) {
+    const errorCode = groupFull
+      ? "invite-group-full"
+      : failedCount > 0
+        ? "invite-people-failed"
+        : "invite-person";
+    redirect(`/?group=${groupId}&error=${encodeURIComponent(errorCode)}`);
+  }
+
   revalidatePath("/");
-  redirect(`/?group=${groupId}&notice=person-added`);
+  redirect(
+    `/?group=${groupId}&notice=${failedCount > 0 ? "people-added-partial" : "people-added"}`,
+  );
 }
 export async function sendEmailInvite(
   _previousState: EmailInviteState,
@@ -412,7 +463,20 @@ export async function createExpense(
   );
   if (!validShares) return { error: "The expense split is invalid." };
 
-  const amountMinor = parseAmountToMinorUnits(payload.amount);
+  if (!uuidPattern.test(payload.groupId)) {
+    return { error: "Check the expense details and make sure shares add up exactly." };
+  }
+  const { data: group, error: groupError } = await supabase
+    .from("groups")
+    .select("currency")
+    .eq("id", payload.groupId)
+    .maybeSingle();
+  if (groupError || !group) {
+    if (groupError) console.error("Expense currency lookup failed:", groupError.message);
+    return { error: "The group could not be loaded. Refresh and try again." };
+  }
+
+  const amountMinor = parseAmountToMinorUnits(payload.amount, group.currency);
   const parsedDate = /^\d{4}-\d{2}-\d{2}$/.test(payload.spentAt)
     ? new Date(`${payload.spentAt}T00:00:00.000Z`)
     : null;
@@ -466,49 +530,6 @@ export async function createExpense(
 
   revalidatePath("/");
   return { expenseId };
-}
-
-export async function recordSettlement(formData: FormData) {
-  const groupId = String(formData.get("groupId") ?? "");
-  const fromUserId = String(formData.get("fromUserId") ?? "");
-  const toUserId = String(formData.get("toUserId") ?? "");
-  if (
-    !uuidPattern.test(groupId) ||
-    !uuidPattern.test(fromUserId) ||
-    !uuidPattern.test(toUserId)
-  ) {
-    goWithError("settlement-details");
-  }
-
-  const { supabase } = await getSignedInClient();
-  const { data: group, error: groupError } = await supabase
-    .from("groups")
-    .select("currency")
-    .eq("id", groupId)
-    .maybeSingle();
-  if (groupError || !group) {
-    if (groupError) console.error("Settlement currency lookup failed:", groupError.message);
-    goWithError("settlement-details");
-  }
-  const amountMinor = parseAmountToMinorUnits(
-    String(formData.get("amount") ?? ""),
-    group.currency,
-  );
-  if (amountMinor === null) goWithError("settlement-details");
-
-  const { error } = await supabase.rpc("create_settlement", {
-    p_group_id: groupId,
-    p_from_user_id: fromUserId,
-    p_to_user_id: toUserId,
-    p_amount_minor: amountMinor,
-  });
-  if (error) {
-    console.error("Settlement recording failed:", error.message);
-    goWithError("settlement-save");
-  }
-
-  revalidatePath("/");
-  redirect(`/?group=${groupId}&notice=settlement-recorded`);
 }
 
 export async function sendReminder(formData: FormData) {

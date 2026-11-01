@@ -18,6 +18,8 @@ export function WhatsAppSettings({
   verified,
   providerConfigured,
   optedIn,
+  phoneDiscoverable,
+  phoneSearchAvailable,
   alerts,
 }: {
   available: boolean;
@@ -26,6 +28,8 @@ export function WhatsAppSettings({
   verified: boolean;
   providerConfigured: boolean;
   optedIn: boolean;
+  phoneDiscoverable: boolean;
+  phoneSearchAvailable: boolean;
   alerts: {
     expenses: boolean;
     invitations: boolean;
@@ -164,6 +168,20 @@ export function WhatsAppSettings({
               <input defaultChecked={optedIn} name="consent" type="checkbox" />
               I agree to receive the selected SETTLR WhatsApp notifications. I can turn them off here at any time.
             </label>
+            {phoneSearchAvailable ? (
+              <label className="whatsapp-discoverability">
+                <input
+                  defaultChecked={phoneDiscoverable}
+                  name="phoneDiscoverable"
+                  type="checkbox"
+                />
+                Let group creators find me using my verified mobile number. My number stays private.
+              </label>
+            ) : (
+              <p className="form-hint phone-search-unavailable">
+                Apply the profile-photo and phone-search migration to enable mobile-number invites.
+              </p>
+            )}
             <PendingButton
               className="button button-primary button-small"
               disabled={preferencesPending}

@@ -1,13 +1,13 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import type { Database } from "@/lib/database.types";
+import { addSettlementDetails } from "@/lib/settlement-history";
+import type { EnrichedTransactionRow } from "@/lib/transaction-types";
 
-export type TransactionRow =
-  Database["public"]["Functions"]["get_recent_transactions"]["Returns"][number];
+export type { TransactionRow } from "@/lib/transaction-types";
 
 export type TransactionPage = {
-  rows?: TransactionRow[];
+  rows?: EnrichedTransactionRow[];
   hasMore?: boolean;
   error?: string;
 };
@@ -47,5 +47,15 @@ export async function loadMoreTransactions(
     };
   }
 
-  return { rows: data.slice(0, 20), hasMore: data.length > 20 };
+  try {
+    return {
+      rows: await addSettlementDetails(data.slice(0, 20)),
+      hasMore: data.length > 20,
+    };
+  } catch (detailsError) {
+    console.error("Transaction settlement details could not be loaded:", detailsError);
+    return {
+      error: "Settlement notes or attachments could not be loaded. Apply the latest migration and try again.",
+    };
+  }
 }

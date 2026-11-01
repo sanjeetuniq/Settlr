@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   formatMoney,
+  formatMinorUnitsForInput,
+  getBalanceDetails,
+  getSettlementParties,
   parseAmountToMinorUnits,
   simplifyBalances,
   splitEvenly,
@@ -12,6 +15,11 @@ import {
   getSupportedOtpType,
   isSignupConfirmation,
 } from "../src/lib/auth-callback.ts";
+import { isValidSettlementComment } from "../src/lib/settlement-validation.ts";
+import {
+  MAX_AVATAR_BYTES,
+  validateAvatar,
+} from "../src/lib/avatar-validation.ts";
 
 test("parses two-decimal amounts without floating point arithmetic", () => {
   assert.equal(parseAmountToMinorUnits("42"), 4200);
@@ -25,6 +33,8 @@ test("parses two-decimal amounts without floating point arithmetic", () => {
 test("formats minor units to exactly two decimal places", () => {
   assert.match(formatMoney(5, "INR"), /0\.05/);
   assert.match(formatMoney(1200, "USD"), /12\.00/);
+  assert.equal(formatMinorUnitsForInput(1200, "INR"), "12.00");
+  assert.equal(formatMinorUnitsForInput(1200, "JPY"), "1200");
 });
 
 test("accepts Supabase email OTP confirmation links", () => {
@@ -79,6 +89,129 @@ test("simplification rejects balances that do not net to zero", () => {
   assert.throws(() =>
     simplifyBalances([{ user_id: "a", balance_minor: -1 }]),
   );
+});
+
+test("partial settlements recalculate remaining group suggestions", () => {
+  const beforeSettlement = simplifyBalances([
+    { user_id: "debtor", balance_minor: -1000 },
+    { user_id: "creditor-a", balance_minor: 800 },
+    { user_id: "creditor-b", balance_minor: 200 },
+  ]);
+  assert.deepEqual(beforeSettlement, [
+    { from_user_id: "debtor", to_user_id: "creditor-a", amount_minor: 800 },
+    { from_user_id: "debtor", to_user_id: "creditor-b", amount_minor: 200 },
+  ]);
+
+  const afterSettlement = simplifyBalances([
+    { user_id: "debtor", balance_minor: -500 },
+    { user_id: "creditor-a", balance_minor: 300 },
+    { user_id: "creditor-b", balance_minor: 200 },
+  ]);
+  assert.deepEqual(afterSettlement, [
+    { from_user_id: "debtor", to_user_id: "creditor-a", amount_minor: 300 },
+    { from_user_id: "debtor", to_user_id: "creditor-b", amount_minor: 200 },
+  ]);
+});
+
+test("balance details retain each transfer's group and direction", () => {
+  const groups = [
+    {
+      group_id: "trip",
+      group_name: "Trip",
+      currency: "INR",
+      transfers: [
+        { from_user_id: "me", to_user_id: "a", amount_minor: 500 },
+      ],
+    },
+    {
+      group_id: "home",
+      group_name: "Home",
+      currency: "USD",
+      transfers: [
+        { from_user_id: "b", to_user_id: "me", amount_minor: 250 },
+      ],
+    },
+  ];
+
+  assert.deepEqual(getBalanceDetails(groups, "me", "owe"), [
+    {
+      group_id: "trip",
+      group_name: "Trip",
+      currency: "INR",
+      counterpart_id: "a",
+      amount_minor: 500,
+    },
+  ]);
+  assert.deepEqual(getBalanceDetails(groups, "me", "owed"), [
+    {
+      group_id: "home",
+      group_name: "Home",
+      currency: "USD",
+      counterpart_id: "b",
+      amount_minor: 250,
+    },
+  ]);
+});
+
+test("settlements from balance details use the correct payer and group party", () => {
+  assert.deepEqual(getSettlementParties("me", "friend", "owe"), {
+    from_user_id: "me",
+    to_user_id: "friend",
+  });
+  assert.deepEqual(getSettlementParties("me", "friend", "owed"), {
+    from_user_id: "friend",
+    to_user_id: "me",
+  });
+});
+
+test("over-settlements reverse the pair balance without changing the group total", () => {
+  const balancesAfterOverpayment = [
+    { user_id: "debtor", balance_minor: 500 },
+    { user_id: "creditor", balance_minor: -500 },
+  ];
+  assert.deepEqual(simplifyBalances(balancesAfterOverpayment), [
+    { from_user_id: "creditor", to_user_id: "debtor", amount_minor: 500 },
+  ]);
+  assert.equal(
+    balancesAfterOverpayment.reduce((total, balance) => total + balance.balance_minor, 0),
+    0,
+  );
+});
+
+test("settlement comments allow at most 50 Unicode characters", () => {
+  assert.equal(isValidSettlementComment("a".repeat(50)), true);
+  assert.equal(isValidSettlementComment("a".repeat(51)), false);
+  assert.equal(isValidSettlementComment("🙂".repeat(50)), true);
+  assert.equal(isValidSettlementComment("🙂".repeat(51)), false);
+});
+
+test("profile photo validation checks PNG, JPEG, WebP signatures, and size", () => {
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff]);
+  const webp = new Uint8Array([
+    0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50,
+  ]);
+  assert.deepEqual(validateAvatar(png, "image/png"), {
+    valid: true,
+    contentType: "image/png",
+    extension: "png",
+  });
+  assert.deepEqual(validateAvatar(jpeg, "image/jpeg"), {
+    valid: true,
+    contentType: "image/jpeg",
+    extension: "jpg",
+  });
+  assert.deepEqual(validateAvatar(webp, "image/webp"), {
+    valid: true,
+    contentType: "image/webp",
+    extension: "webp",
+  });
+  const maximumPng = new Uint8Array(MAX_AVATAR_BYTES);
+  maximumPng.set(png);
+  assert.equal(validateAvatar(maximumPng, "image/png").valid, true);
+  assert.equal(validateAvatar(png, "image/jpeg").valid, false);
+  assert.equal(validateAvatar(new Uint8Array(), "image/png").valid, false);
+  assert.equal(validateAvatar(new Uint8Array(MAX_AVATAR_BYTES + 1), "image/png").valid, false);
 });
 
 test("receipt content validation checks signature, declared type, and size", () => {

@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { loadMoreTransactions, type TransactionRow } from "@/app/groups/transaction-actions";
+import { loadMoreTransactions } from "@/app/groups/transaction-actions";
+import type { EnrichedTransactionRow } from "@/lib/transaction-types";
 import { formatMoney } from "@/lib/money";
 
 export function TransactionHistory({
@@ -11,7 +12,7 @@ export function TransactionHistory({
   receipts,
   initialError,
 }: {
-  initialRows: TransactionRow[];
+  initialRows: EnrichedTransactionRow[];
   initialHasMore: boolean;
   names: Record<string, string>;
   receipts: Record<string, { file_name: string; signed_url: string }[]>;
@@ -78,6 +79,19 @@ export function TransactionHistory({
                     View receipt · {receipt.file_name}
                   </a>
                 ))}
+                {row.comment && (
+                  <small className="transaction-comment">Settlement note: {row.comment}</small>
+                )}
+                {row.settlementAttachment && (
+                  <a
+                    className="receipt-link"
+                    href={row.settlementAttachment.signed_url}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    View settlement attachment · {row.settlementAttachment.file_name}
+                  </a>
+                )}
               </div>
               <strong>{formatMoney(row.amount_minor, row.currency)}</strong>
             </article>

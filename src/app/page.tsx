@@ -3,23 +3,28 @@ import { redirect } from "next/navigation";
 import { BrandLogo } from "@/components/brand-logo";
 import { ExpenseComposer } from "@/components/expense-composer";
 import { InviteForm } from "@/components/invite-form";
+import { SettlementCelebration } from "@/components/settlement-celebration";
+import { SettlementForm } from "@/components/settlement-form";
 import { TransactionHistory } from "@/components/transaction-history";
 import { WhatsAppSettings } from "@/components/whatsapp-settings";
 import { PendingButton } from "@/components/pending-button";
-import type { TransactionRow } from "@/app/groups/transaction-actions";
+import { ProfileAvatar } from "@/components/profile-avatar";
+import type { EnrichedTransactionRow } from "@/lib/transaction-types";
 import {
   archiveGroup,
   createGroup,
   joinGroup,
   joinOpenGroup,
   markReminderRead,
-  recordSettlement,
   sendReminder,
   setGroupPublic,
 } from "@/app/groups/actions";
 import { signOut } from "@/app/auth/actions";
-import { friendshipQuotes } from "@/lib/friendship-quotes";
-import { formatMoney, simplifyBalances } from "@/lib/money";
+import { addSettlementDetails } from "@/lib/settlement-history";
+import {
+  formatMoney,
+  simplifyBalances,
+} from "@/lib/money";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/server";
 
@@ -27,6 +32,7 @@ type SearchParams = Promise<{
   group?: string;
   invite?: string;
   notice?: string;
+  celebration?: string;
   error?: string;
   step?: string;
 }>;
@@ -35,6 +41,7 @@ const errorMessages: Record<string, string> = {
   "invite-revoke": "Invite link could not be revoked.",
   "invite-person": "That SETTLR user could not be added to the group.",
   "invite-people-setup": "Apply the group-invites migration in Supabase, then try again.",
+  "invite-people-failed": "None of the selected people could be added. Refresh the group and try again.",
   "invite-group-full": "This group has reached its 40-person limit.",
   "group-details": "Give your group a name and choose a supported currency.",
   "group-create": "Your group could not be created. Please try again.",
@@ -69,11 +76,9 @@ const noticeMessages: Record<string, string> = {
   "reminder-sent": "In-app reminder sent.",
   "invite-revoked": "Invite link revoked.",
   "person-added": "Your person has been added to the group.",
+  "people-added": "Selected people were added to the group.",
+  "people-added-partial": "Some selected people were added, but one or more could not be added. Check the group capacity and try again.",
 };
-
-function minorAmountInput(amount: number) {
-  return `${Math.floor(amount / 100)}.${String(amount % 100).padStart(2, "0")}`;
-}
 
 function initials(name: string) {
   return name
@@ -337,12 +342,27 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
     "get_recent_transactions",
     { p_before_created_at: null, p_before_id: null, p_limit: 21 },
   );
-  const transactionRows: TransactionRow[] = historyData ?? [];
+  let transactionRows: EnrichedTransactionRow[] = [];
+  let transactionDetailsError: string | undefined;
+  if (!historyQueryError && historyData) {
+    try {
+      transactionRows = await addSettlementDetails(historyData);
+    } catch (detailsError) {
+      console.error("Settlement details could not be loaded:", detailsError);
+      transactionRows = historyData.map((row) => ({
+        ...row,
+        comment: null,
+        settlementAttachment: null,
+      }));
+      transactionDetailsError =
+        "Settlement notes and attachments are unavailable. Apply the settlement comments and attachments migration.";
+    }
+  }
   const transactionHistoryError = historyQueryError
     ? ["PGRST202", "42883"].includes(historyQueryError.code)
       ? "Apply the WhatsApp and transaction-history migration to enable combined history."
       : "Recent transactions could not be loaded."
-    : undefined;
+    : transactionDetailsError;
   if (historyQueryError && !["PGRST202", "42883"].includes(historyQueryError.code)) {
     console.error("Transaction history query failed:", historyQueryError.message);
   }
@@ -352,27 +372,43 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
   let whatsappPreference: {
     phone_e164: string | null;
     phone_verified_at: string | null;
+    phone_discoverable?: boolean;
     opted_in_at: string | null;
     expense_alerts: boolean;
     invitation_alerts: boolean;
     reminder_alerts: boolean;
     settlement_alerts: boolean;
   } | null = null;
-  if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  let phoneSearchAvailable = false;
+  if (process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY) {
     const admin = createAdminClient();
-    const { data, error } = await admin
+    const preferenceResult = await admin
       .from("whatsapp_preferences")
-      .select("phone_e164, phone_verified_at, opted_in_at, expense_alerts, invitation_alerts, reminder_alerts, settlement_alerts")
+      .select("phone_e164, phone_verified_at, phone_discoverable, opted_in_at, expense_alerts, invitation_alerts, reminder_alerts, settlement_alerts")
       .eq("user_id", user.id)
       .maybeSingle();
-    if (error && !["PGRST205", "42P01"].includes(error.code)) {
-      console.error("WhatsApp preferences query failed:", error.message);
+    let preferenceData = preferenceResult.data;
+    let preferenceError = preferenceResult.error;
+    if (preferenceError && ["PGRST204", "42703"].includes(preferenceError.code)) {
+      phoneSearchAvailable = false;
+      const fallbackPreference = await admin
+        .from("whatsapp_preferences")
+        .select("phone_e164, phone_verified_at, opted_in_at, expense_alerts, invitation_alerts, reminder_alerts, settlement_alerts")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      preferenceData = fallbackPreference.data
+        ? { ...fallbackPreference.data, phone_discoverable: false }
+        : null;
+      preferenceError = fallbackPreference.error;
+    }
+    if (preferenceError && !["PGRST205", "42P01"].includes(preferenceError.code)) {
+      console.error("WhatsApp preferences query failed:", preferenceError.message);
       whatsappUnavailableMessage =
         "WhatsApp preferences are temporarily unavailable. Your groups and transactions are unaffected.";
     }
-    if (!error) {
+    if (!preferenceError) {
       whatsappAvailable = true;
-      whatsappPreference = data;
+      whatsappPreference = preferenceData;
     }
   }
 
@@ -390,17 +426,77 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
       ),
     ]),
   );
-  const { data: profiles, error: profilesError } = await supabase
+  const profileResult = await supabase
     .from("profiles")
-    .select("id, display_name")
+    .select("id, display_name, avatar_path")
     .in("id", profileIds);
-  if (profilesError) {
-    console.error("Profile query failed:", profilesError.message);
-    throw new Error("Group member names could not be loaded.");
+  let profiles: {
+    id: string;
+    display_name: string;
+    avatar_path: string | null;
+  }[];
+  let avatarMigrationAvailable = true;
+  if (profileResult.error && ["PGRST204", "42703"].includes(profileResult.error.code)) {
+    avatarMigrationAvailable = false;
+    const fallbackProfiles = await supabase
+      .from("profiles")
+      .select("id, display_name")
+      .in("id", profileIds);
+    if (fallbackProfiles.error) {
+      console.error("Profile query failed:", fallbackProfiles.error.message);
+      throw new Error("Group member names could not be loaded.");
+    }
+    profiles = (fallbackProfiles.data ?? []).map((profile) => ({
+      ...profile,
+      avatar_path: null,
+    }));
+  } else {
+    if (profileResult.error) {
+      console.error("Profile query failed:", profileResult.error.message);
+      throw new Error("Group member names could not be loaded.");
+    }
+    profiles = profileResult.data ?? [];
   }
-  const profileNames = new Map(
+  const profileNamesById = new Map(
     profiles.map((profile) => [profile.id, profile.display_name]),
   );
+  const profileNames = new Map(
+    profileIds.map((profileId) => [
+      profileId,
+      profileNamesById.get(profileId) || "Member",
+    ]),
+  );
+  const profileAvatarUrls = new Map<string, string>();
+  if (avatarMigrationAvailable) {
+    const avatarDisplayGroup =
+      groupData.find((group) => group.id === params.group) ??
+      groupData.find((group) => group.archived_at === null) ??
+      groupData[0];
+    const visibleAvatarIds = new Set([
+      user.id,
+      ...(avatarDisplayGroup?.members.map((member) => member.user_id) ?? []),
+    ]);
+    const avatarProfiles = profiles.filter(
+      (profile): profile is typeof profile & { avatar_path: string } =>
+        profile.avatar_path !== null &&
+        visibleAvatarIds.has(profile.id),
+    );
+    const avatarLinks = await Promise.all(
+      avatarProfiles.map(async (profile) => {
+        const { data, error } = await supabase.storage
+          .from("profile-avatars")
+          .createSignedUrl(profile.avatar_path, 3600);
+        if (error) {
+          console.error("Profile photo link could not be created:", error.message);
+          throw new Error("A group member profile photo could not be loaded.");
+        }
+        return [profile.id, data.signedUrl] as const;
+      }),
+    );
+    for (const [profileId, signedUrl] of avatarLinks) {
+      profileAvatarUrls.set(profileId, signedUrl);
+    }
+  }
   const transactionProfileNames = Object.fromEntries(profileNames);
   const receiptsByExpenseId = Object.fromEntries(
     groupData.flatMap((group) =>
@@ -416,11 +512,12 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
     ...group,
     members: group.members.map((member) => ({
       id: member.user_id,
-      name: profileNames.get(member.user_id) ?? "Group member",
+      name: profileNames.get(member.user_id) ?? "Member",
+      avatarUrl: profileAvatarUrls.get(member.user_id) ?? null,
     })),
     expenses: group.expenses.map((expense) => ({
       ...expense,
-      payerName: profileNames.get(expense.payer_id) ?? "Group member",
+      payerName: profileNames.get(expense.payer_id) ?? "Member",
     })),
   }));
   const activeGroups = groupsWithNames.filter((group) => group.archived_at === null);
@@ -435,6 +532,10 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
     selectedGroup?.created_by === user.id &&
     !isSelectedGroupArchived &&
     selectedGroup.balances.every((balance) => balance.balance_minor === 0);
+  const celebrateSettlement =
+    params.notice === "settlement-recorded" &&
+    Boolean(params.celebration) &&
+    selectedGroup?.balances.every((balance) => balance.balance_minor === 0);
 
   const { data: reminders, error: remindersError } = await supabase
     .from("reminders")
@@ -448,9 +549,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
     throw new Error("Your reminders could not be loaded.");
   }
 
-  const ownProfile = profiles.find((profile) => profile.id === user.id);
-  const name = ownProfile?.display_name || user.email?.split("@")[0] || "friend";
-  const welcomeQuote = friendshipQuotes[new Date().getDate() % friendshipQuotes.length];
+  const name = profileNames.get(user.id) ?? "Member";
   const amountsByCurrency = groupData.reduce(
     (totals, group) => {
       const balance =
@@ -489,7 +588,6 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
   }
 
   const unreadCount = reminders.length;
-  const activeCurrency = selectedGroup?.currency ?? "INR";
   const currentBalance =
     selectedGroup?.balances.find((balance) => balance.user_id === user.id)
       ?.balance_minor ?? 0;
@@ -499,6 +597,9 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
 
   return (
     <main className="app-frame">
+      <SettlementCelebration
+        celebrationId={celebrateSettlement ? params.celebration : undefined}
+      />
       <aside className="sidebar">
         <Link className="brand brand-dark" href="/">
           <BrandLogo sizes="158px" />
@@ -517,24 +618,12 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
           <span className="side-icon">⇄</span> Settle up
         </a>
         <div className="sidebar-section-heading">
-          <span className="sidebar-section-label">YOUR GROUPS</span>
+          <span className="sidebar-section-label">GROUPS</span>
           <span className="group-count">{activeGroups.length}</span>
         </div>
-        <nav className="group-nav" aria-label="Your groups">
-          {activeGroups.map((group, index) => (
-            <Link
-              className={`group-nav-link ${selectedGroup?.id === group.id ? "selected" : ""}`}
-              href={`/?group=${group.id}`}
-              key={group.id}
-            >
-              <span className={`group-symbol group-symbol-${index % 4}`}>
-                {group.name.slice(0, 1).toUpperCase()}
-              </span>
-              <span className="group-nav-name">{group.name}</span>
-              <span className="group-nav-members">{group.members.length}</span>
-            </Link>
-          ))}
-        </nav>
+        <a className="sidebar-link" href="#group-switcher">
+          <span className="side-icon">▦</span> Select or create
+        </a>
         <div className="sidebar-section-heading archive-heading">
           <span className="sidebar-section-label">ARCHIVE</span>
           <span className="group-count">{archivedGroups.length}</span>
@@ -582,7 +671,11 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
             </Link>
             <details className="account-menu">
               <summary aria-label="Open account menu" className="user-chip">
-                <span className="avatar avatar-current">{initials(name)}</span>
+                <ProfileAvatar
+                  className="avatar-current"
+                  imageUrl={profileAvatarUrls.get(user.id) ?? null}
+                  initials={initials(name)}
+                />
                 <span>{name}</span>
                 <span aria-hidden="true" className="chevron">⌄</span>
               </summary>
@@ -591,6 +684,9 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
                   <strong>{name}</strong>
                   {user.email && <span>{user.email}</span>}
                 </div>
+                <Link className="account-menu-settings" href="/settings">
+                  Profile settings
+                </Link>
                 <form action={signOut}>
                   <PendingButton className="account-menu-signout" pendingLabel="Signing out…">Sign out</PendingButton>
                 </form>
@@ -624,13 +720,9 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
                   day: "numeric",
                 }).toUpperCase()}
               </div>
-              <h1>Hey, {name.split(" ")[0]} <span className="wave">✳</span></h1>
-              <p>The good stuff is better when the numbers are clear.</p>
-              <blockquote>{welcomeQuote}</blockquote>
+              <h1>Welcome back, {name.split(" ")[0]} <span className="wave">✳</span></h1>
+              <p>Your balances and shared groups, all in one place.</p>
             </div>
-            <a className="button button-primary" href="#add-expense">
-              <span aria-hidden="true">＋</span> Add an expense
-            </a>
           </section>
 
           {inviteToken && (
@@ -668,6 +760,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
                   <InviteForm
                     activeInvites={selectedGroup.invites}
                     groupId={selectedGroup.id}
+                    phoneSearchAvailable={phoneSearchAvailable}
                   />
                 </div>
               )}
@@ -682,34 +775,98 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
             </section>
           )}
 
-          <section className="summary-grid" aria-label="Your balance summary">
-            <article className="summary-card summary-card-main">
-              <div className="summary-card-top">
-                <span>YOUR BALANCE</span>
-                <span className="balance-icon">↗</span>
-              </div>
-              <strong>{formatMoney(currentBalance, activeCurrency)}</strong>
-              <div className="summary-card-bottom">
-                <span>
-                  {currentBalance > 0
-                    ? "You are owed in this group"
-                    : currentBalance < 0
-                      ? "You owe in this group"
-                      : "You are all settled up"}
-                </span>
-                <span className="balance-pill">{selectedGroup?.name ?? "No group yet"}</span>
-              </div>
-            </article>
-            <article className="summary-card summary-card-light">
-              <div className="summary-label">YOU OWE</div>
+          <section className="summary-grid" aria-label="Your overall balances">
+            <Link
+              aria-label="View who you owe and the group for each amount"
+              className="summary-card summary-card-light summary-card-link summary-card-overall"
+              href="/balances?direction=owe"
+            >
+              <div className="summary-label">YOU OWE · ALL GROUPS</div>
               <strong className="summary-total">{formatCurrencyTotals("owed")}</strong>
-              <span className="summary-caption"><span className="tiny-arrow down">↘</span> Across your groups · grouped by currency</span>
-            </article>
-            <article className="summary-card summary-card-light summary-card-accent">
-              <div className="summary-label">OWED TO YOU</div>
+              <span className="summary-caption"><span className="tiny-arrow down">↘</span> See who and where</span>
+            </Link>
+            <Link
+              aria-label="View who owes you and the group for each amount"
+              className="summary-card summary-card-light summary-card-accent summary-card-link summary-card-overall"
+              href="/balances?direction=owed"
+            >
+              <div className="summary-label">OWED TO YOU · ALL GROUPS</div>
               <strong className="summary-total">{formatCurrencyTotals("collecting")}</strong>
-              <span className="summary-caption"><span className="tiny-arrow up">↗</span> Across your groups · grouped by currency</span>
-            </article>
+              <span className="summary-caption"><span className="tiny-arrow up">↗</span> See who and where</span>
+            </Link>
+          </section>
+
+          <section
+            aria-labelledby="group-switcher-heading"
+            className="panel group-switcher-panel"
+            id="group-switcher"
+          >
+            <div className="group-switcher-intro">
+              <div className="eyebrow">YOUR WORKSPACE</div>
+              <h2 id="group-switcher-heading">Groups</h2>
+              <p>Select an active group or create a new one.</p>
+            </div>
+            <div className="group-switcher-controls">
+              <form action="/" className="group-select-form" method="get">
+                <label htmlFor="active-group-select">Active group</label>
+                <div className="group-select-row">
+                  <select
+                    defaultValue={selectedGroup?.archived_at === null ? selectedGroup.id : ""}
+                    id="active-group-select"
+                    name="group"
+                    required
+                    disabled={activeGroups.length === 0}
+                  >
+                    <option disabled value="">Choose an active group</option>
+                    {activeGroups.map((group) => (
+                      <option key={group.id} value={group.id}>
+                        {group.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="button button-outline button-small"
+                    disabled={activeGroups.length === 0}
+                    type="submit"
+                  >
+                    Open
+                  </button>
+                </div>
+              </form>
+              <details
+                className="group-create-disclosure"
+                open={["group-details", "group-create", "group-create-rpc-setup"].includes(params.error ?? "")}
+              >
+                <summary>
+                  <span>Create a group</span>
+                  <span aria-hidden="true">＋</span>
+                </summary>
+                <form action={createGroup} className="group-create-form">
+                  <label>
+                    Group name
+                    <input
+                      autoComplete="off"
+                      maxLength={80}
+                      name="name"
+                      placeholder="The summer trip"
+                      required
+                    />
+                  </label>
+                  <label>
+                    Currency
+                    <select defaultValue="INR" name="currency">
+                      {["INR", "USD", "EUR", "GBP", "CAD", "AUD"].map((currency) => (
+                        <option key={currency} value={currency}>{currency}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <PendingButton className="button button-dark button-small" pendingLabel="Creating…">
+                    Create
+                  </PendingButton>
+                </form>
+                <small className="form-hint">Invite up to 40 members after creating.</small>
+              </details>
+            </div>
           </section>
 
           <div className="dashboard-grid">
@@ -753,6 +910,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
                       <InviteForm
                         activeInvites={selectedGroup.invites}
                         groupId={selectedGroup.id}
+                        phoneSearchAvailable={phoneSearchAvailable}
                       />
                     )}
                     {canArchiveSelectedGroup && (
@@ -783,7 +941,11 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
                   <div className="member-strip">
                     {selectedGroup.members.slice(0, 7).map((member, index) => (
                       <div className="member-avatar-wrap" key={member.id} title={member.name}>
-                        <span className={`avatar avatar-color-${index % 5}`}>{initials(member.name)}</span>
+                        <ProfileAvatar
+                          className={`avatar-color-${index % 5}`}
+                          imageUrl={member.avatarUrl}
+                          initials={initials(member.name)}
+                        />
                       </div>
                     ))}
                     <span className="member-name-list">
@@ -804,7 +966,11 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
                           ?.balance_minor ?? 0;
                       return (
                         <div className="balance-row" key={member.id}>
-                          <span className={`avatar avatar-color-${index % 5}`}>{initials(member.name)}</span>
+                          <ProfileAvatar
+                            className={`avatar-color-${index % 5}`}
+                            imageUrl={member.avatarUrl}
+                            initials={initials(member.name)}
+                          />
                           <span className="balance-person">
                             <b>{member.name}{member.id === user.id ? " · you" : ""}</b>
                             <small>{memberBalance > 0 ? "is owed" : memberBalance < 0 ? "owes" : "all settled"}</small>
@@ -838,11 +1004,10 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
                   {selectedGroup && !isSelectedGroupArchived ? (
                     <ExpenseComposer
                       key={selectedGroup.id}
-                groupId={selectedGroup.id}
-                currency={selectedGroup.currency}
-                currentUserId={user.id}
-                firstExpenseStep
-                members={selectedGroup.members}
+                      groupId={selectedGroup.id}
+                      currency={selectedGroup.currency}
+                      currentUserId={user.id}
+                      members={selectedGroup.members}
                     />
                   ) : isSelectedGroupArchived ? (
                     <p className="muted">Archived groups are read-only. Their activity is preserved alongside this group.</p>
@@ -858,13 +1023,18 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
                 <div>
                   <div className="eyebrow">A CLEAN SLATE</div>
                   <h2>Simplify & settle</h2>
+                  {selectedGroup && (
+                    <span className="settle-group-label">
+                      For {selectedGroup.name} only
+                    </span>
+                  )}
                 </div>
                 <span className="settle-sparkle">✳</span>
               </div>
               {selectedGroup && selectedGroup.suggestions.length > 0 ? (
                 <>
                   <p className="panel-description">
-                    Fewer back-and-forths. These suggestions don’t change balances until recorded.
+                    These suggestions use {selectedGroup.name} balances only and change them when recorded.
                   </p>
                   <div className="suggestion-list">
                     {selectedGroup.suggestions.map((suggestion) => {
@@ -875,22 +1045,30 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
                         <details className="suggestion-item" key={`${suggestion.from_user_id}-${suggestion.to_user_id}`}>
                           <summary>
                             <span className="suggestion-avatars">
-                              <span className="avatar avatar-color-1">{initials(debtor.name)}</span>
+                              <ProfileAvatar
+                                className="avatar-color-1"
+                                imageUrl={debtor.avatarUrl}
+                                initials={initials(debtor.name)}
+                              />
                               <span className="transfer-arrow">→</span>
-                              <span className="avatar avatar-color-3">{initials(creditor.name)}</span>
+                              <ProfileAvatar
+                                className="avatar-color-3"
+                                imageUrl={creditor.avatarUrl}
+                                initials={initials(creditor.name)}
+                              />
                             </span>
                             <span className="suggestion-names"><b>{debtor.name}</b><small>pays {creditor.name}</small></span>
                             <strong>{formatMoney(suggestion.amount_minor, selectedGroup.currency)}</strong>
                           </summary>
                           {!isSelectedGroupArchived && (
                             <div className="suggestion-actions">
-                            <form action={recordSettlement}>
-                              <input name="groupId" type="hidden" value={selectedGroup.id} />
-                              <input name="fromUserId" type="hidden" value={debtor.id} />
-                              <input name="toUserId" type="hidden" value={creditor.id} />
-                              <input name="amount" type="hidden" value={minorAmountInput(suggestion.amount_minor)} />
-                              <PendingButton className="button button-primary button-small" pendingLabel="Recording…">Record settlement</PendingButton>
-                            </form>
+                            <SettlementForm
+                              amountMinor={suggestion.amount_minor}
+                              currency={selectedGroup.currency}
+                              fromUserId={debtor.id}
+                              groupId={selectedGroup.id}
+                              toUserId={creditor.id}
+                            />
                             {debtor.id !== user.id && (
                               <form action={sendReminder}>
                                 <input name="groupId" type="hidden" value={selectedGroup.id} />
@@ -997,7 +1175,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
             )}
           </section>
 
-          <section className="bottom-grid">
+          <section className="reminders-grid">
             <section className="panel reminders-panel" id="reminders">
               <div className="panel-heading">
                 <div>
@@ -1027,32 +1205,6 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
               )}
               <p className="privacy-note">Reminders stay in the app. No email or SMS is sent.</p>
             </section>
-
-            <section className="panel create-group-panel">
-              <div className="panel-heading">
-                <div>
-                  <div className="eyebrow">NEW ADVENTURE?</div>
-                  <h2>Create a group</h2>
-                </div>
-                <span className="panel-emoji">＋</span>
-              </div>
-              <form action={createGroup} className="stack-form compact-form">
-                <label>
-                  Give it a name
-                  <input maxLength={80} name="name" placeholder="The summer trip" required />
-                </label>
-                <label>
-                  Group currency
-                  <select defaultValue="INR" name="currency">
-                    {["INR", "USD", "EUR", "GBP", "CAD", "AUD"].map((currency) => (
-                      <option key={currency} value={currency}>{currency}</option>
-                    ))}
-                  </select>
-                </label>
-                <PendingButton className="button button-dark" pendingLabel="Creating…">Create group <span aria-hidden="true">↗</span></PendingButton>
-                <small className="form-hint">Up to 40 members · invite links expire in 7 days</small>
-              </form>
-            </section>
           </section>
           <WhatsAppSettings
             alerts={{
@@ -1065,6 +1217,8 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
             unavailableMessage={whatsappUnavailableMessage}
             optedIn={Boolean(whatsappPreference?.opted_in_at)}
             phone={whatsappPreference?.phone_e164 ?? null}
+            phoneDiscoverable={whatsappPreference?.phone_discoverable ?? false}
+            phoneSearchAvailable={phoneSearchAvailable}
             providerConfigured={Boolean(
               process.env.WHATSAPP_ACCESS_TOKEN &&
               process.env.WHATSAPP_PHONE_NUMBER_ID &&

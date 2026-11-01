@@ -8,11 +8,13 @@ import { parseAmountToMinorUnits, splitEvenly } from "@/lib/money";
 type Member = { id: string; name: string };
 
 export function ExpenseComposer({
+  currency,
   groupId,
   currentUserId,
   members,
   firstExpenseStep = false,
 }: {
+  currency: string;
   groupId: string;
   currentUserId: string;
   members: Member[];
@@ -73,12 +75,16 @@ export function ExpenseComposer({
       return;
     }
     const amount = String(formData.get("amount") ?? "");
-    const amountMinor = parseAmountToMinorUnits(amount);
+    const amountMinor = parseAmountToMinorUnits(amount, currency);
     const payerId = String(formData.get("payerId") ?? "");
     const description = String(formData.get("description") ?? "").trim();
     const spentAt = String(formData.get("spentAt") ?? "");
     if (!amountMinor) {
-      setErrorMessage("Enter an amount with up to two decimal places.");
+      setErrorMessage(
+        currency === "JPY"
+          ? "Enter a whole-number amount."
+          : "Enter an amount with up to two decimal places.",
+      );
       return;
     }
     if (!participants.length) {
@@ -92,7 +98,8 @@ export function ExpenseComposer({
     } else {
       shares = participants.map((userId) => ({
         user_id: userId,
-        amount_minor: parseAmountToMinorUnits(customAmounts[userId] ?? "") ?? 0,
+        amount_minor:
+          parseAmountToMinorUnits(customAmounts[userId] ?? "", currency) ?? 0,
       }));
       if (shares.some((share) => share.amount_minor < 0)) {
         setErrorMessage("Enter a positive amount for every selected person.");
@@ -151,39 +158,39 @@ export function ExpenseComposer({
 
   const participantSelector = (
     <fieldset className="participant-fieldset">
-        <legend>Split between</legend>
-        <div className="participant-list">
-          {members.map((member) => {
-            const selected = participants.includes(member.id);
-            return (
-              <div className="participant-row" key={member.id}>
-                <label className="check-label">
-                  <input
-                    checked={selected}
-                    onChange={() => toggleParticipant(member.id)}
-                    type="checkbox"
-                  />
-                  <span>{member.name}</span>
-                </label>
-                {selected && splitMode === "custom" && (
-                  <input
-                    aria-label={`${member.name}'s share`}
-                    className="share-input"
-                    inputMode="decimal"
-                    onChange={(event) =>
-                      setCustomAmounts((current) => ({
-                        ...current,
-                        [member.id]: event.target.value,
-                      }))
-                    }
-                    placeholder="0.00"
-                    value={customAmounts[member.id] ?? ""}
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
+      <legend>Split between</legend>
+      <div className="participant-list">
+        {members.map((member) => {
+          const selected = participants.includes(member.id);
+          return (
+            <div className="participant-row" key={member.id}>
+              <label className="check-label">
+                <input
+                  checked={selected}
+                  onChange={() => toggleParticipant(member.id)}
+                  type="checkbox"
+                />
+                <span>{member.name}</span>
+              </label>
+              {selected && splitMode === "custom" && (
+                <input
+                  aria-label={`${member.name}'s share`}
+                  className="share-input"
+                  inputMode="decimal"
+                  onChange={(event) =>
+                    setCustomAmounts((current) => ({
+                      ...current,
+                      [member.id]: event.target.value,
+                    }))
+                  }
+                  placeholder={currency === "JPY" ? "0" : "0.00"}
+                  value={customAmounts[member.id] ?? ""}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
     </fieldset>
   );
 
@@ -204,7 +211,6 @@ export function ExpenseComposer({
                 min="0.01"
               />
             </label>
-            {participantSelector}
             <label>
               What was it for?
               <input
@@ -254,7 +260,6 @@ export function ExpenseComposer({
           <span className="expense-options-action">Change</span>
         </summary>
         <div className="expense-options-content">
-          {!firstExpenseStep && participantSelector}
           <div className="form-row">
             <label className="field-grow">
               Paid by
@@ -293,41 +298,7 @@ export function ExpenseComposer({
               />
             </label>
           </div>
-          <fieldset className="participant-fieldset">
-            <legend>Split between</legend>
-            <div className="participant-list">
-              {members.map((member) => {
-                const selected = participants.includes(member.id);
-                return (
-                  <div className="participant-row" key={member.id}>
-                    <label className="check-label">
-                      <input
-                        checked={selected}
-                        onChange={() => toggleParticipant(member.id)}
-                        type="checkbox"
-                      />
-                      <span>{member.name}</span>
-                    </label>
-                    {selected && splitMode === "custom" && (
-                      <input
-                        aria-label={`${member.name}'s share`}
-                        className="share-input"
-                        inputMode="decimal"
-                        onChange={(event) =>
-                          setCustomAmounts((current) => ({
-                            ...current,
-                            [member.id]: event.target.value,
-                          }))
-                        }
-                        placeholder="0.00"
-                        value={customAmounts[member.id] ?? ""}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </fieldset>
+          {participantSelector}
           <div className="form-row form-row-bottom">
             <div className="split-toggle" role="group" aria-label="Split type">
               <button

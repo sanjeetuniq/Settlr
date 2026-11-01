@@ -17,6 +17,12 @@ export function currencyMinorUnitScale(currency: string) {
   return currency === "JPY" ? 1 : 100;
 }
 
+export function formatMinorUnitsForInput(minorUnits: number, currency: string) {
+  const scale = currencyMinorUnitScale(currency);
+  if (scale === 1) return String(minorUnits);
+  return `${Math.floor(minorUnits / scale)}.${String(minorUnits % scale).padStart(2, "0")}`;
+}
+
 export function parseAmountToMinorUnits(
   input: string,
   currency = "INR",
@@ -67,6 +73,12 @@ export function splitEvenly(totalMinor: number, userIds: string[]) {
   }));
 }
 
+export type BalanceTransfer = {
+  from_user_id: string;
+  to_user_id: string;
+  amount_minor: number;
+};
+
 export function simplifyBalances(
   balances: { user_id: string; balance_minor: number }[],
 ) {
@@ -85,8 +97,7 @@ export function simplifyBalances(
     throw new Error("Group balances do not reconcile.");
   }
 
-  const transfers: { from_user_id: string; to_user_id: string; amount_minor: number }[] =
-    [];
+  const transfers: BalanceTransfer[] = [];
   let debtorIndex = 0;
   let creditorIndex = 0;
 
@@ -109,4 +120,53 @@ export function simplifyBalances(
   }
 
   return transfers;
+}
+
+export type GroupBalanceTransfers = {
+  group_id: string;
+  group_name: string;
+  currency: string;
+  transfers: BalanceTransfer[];
+};
+
+export type BalanceDetail = {
+  group_id: string;
+  group_name: string;
+  currency: string;
+  counterpart_id: string;
+  amount_minor: number;
+};
+
+export function getSettlementParties(
+  userId: string,
+  counterpartId: string,
+  direction: "owe" | "owed",
+) {
+  return direction === "owe"
+    ? { from_user_id: userId, to_user_id: counterpartId }
+    : { from_user_id: counterpartId, to_user_id: userId };
+}
+
+export function getBalanceDetails(
+  groups: GroupBalanceTransfers[],
+  userId: string,
+  direction: "owe" | "owed",
+): BalanceDetail[] {
+  return groups.flatMap((group) =>
+    group.transfers.flatMap((transfer) => {
+      const isOwed = direction === "owe"
+        ? transfer.from_user_id === userId
+        : transfer.to_user_id === userId;
+      if (!isOwed) return [];
+      return [{
+        group_id: group.group_id,
+        group_name: group.group_name,
+        currency: group.currency,
+        counterpart_id: direction === "owe"
+          ? transfer.to_user_id
+          : transfer.from_user_id,
+        amount_minor: transfer.amount_minor,
+      }];
+    }),
+  );
 }

@@ -3,7 +3,7 @@
 import { useActionState, useRef, useState } from "react";
 import {
   createInvite,
-  inviteExistingPerson,
+  inviteExistingPeople,
   searchInvitePeople,
   sendEmailInvite,
   revokeInvite,
@@ -16,9 +16,11 @@ import { PendingButton } from "@/components/pending-button";
 export function InviteForm({
   groupId,
   activeInvites,
+  phoneSearchAvailable,
 }: {
   groupId: string;
   activeInvites: { id: string; expires_at: string }[];
+  phoneSearchAvailable: boolean;
 }) {
   const [section, setSection] = useState<"search" | "email" | "link">("search");
   const [searchState, searchAction, searchPending] = useActionState(
@@ -34,6 +36,7 @@ export function InviteForm({
     {} as InviteState,
   );
   const [copyMessage, setCopyMessage] = useState("");
+  const [selectedPeople, setSelectedPeople] = useState<string[]>([]);
   const linkInput = useRef<HTMLInputElement>(null);
 
   return (
@@ -70,19 +73,25 @@ export function InviteForm({
         {section === "search" && (
           <div className="invite-section">
             <p className="invite-explainer">
-              Find a SETTLR user by name or exact email. Adding them joins them to this group.
+              {phoneSearchAvailable
+                ? "Search by name, exact email, or an exact verified mobile number. People must opt in to phone search; their number stays private."
+                : "Find a SETTLR user by name or exact email. Apply the phone-search migration to enable mobile-number lookup."}
             </p>
-            <form action={searchAction} className="invite-search-form">
+            <form
+              action={searchAction}
+              className="invite-search-form"
+              onSubmit={() => setSelectedPeople([])}
+            >
               <input name="groupId" type="hidden" value={groupId} />
               <label>
-                Name or email
+                {phoneSearchAvailable ? "Name, email, or mobile" : "Name or email"}
                 <input
                   autoComplete="off"
                   defaultValue={searchState.query}
                   maxLength={254}
                   minLength={2}
                   name="query"
-                  placeholder="Search people"
+                  placeholder={phoneSearchAvailable ? "Name, email, or +14155550123" : "Search people"}
                   required
                 />
               </label>
@@ -95,23 +104,47 @@ export function InviteForm({
             )}
             {searchState.people && (
               searchState.people.length > 0 ? (
-                <div className="invite-people-results" aria-live="polite">
-                  {searchState.people.map((person) => (
-                    <form action={inviteExistingPerson} className="invite-person-row" key={person.id}>
-                      <input name="groupId" type="hidden" value={groupId} />
-                      <input name="userId" type="hidden" value={person.id} />
-                      <span>
-                        <strong>{person.display_name}</strong>
-                        {person.email && <small>{person.email}</small>}
-                      </span>
-                      {person.is_member ? (
-                        <span className="invite-already-added">Already in group</span>
-                      ) : (
-                        <PendingButton className="button button-primary button-small" pendingLabel="Adding…">Add</PendingButton>
-                      )}
-                    </form>
-                  ))}
-                </div>
+                <form action={inviteExistingPeople} className="invite-people-form">
+                  <input name="groupId" type="hidden" value={groupId} />
+                  <div className="invite-people-results" aria-live="polite">
+                    {searchState.people.map((person) => (
+                      <label className="invite-person-row" key={person.id}>
+                        {!person.is_member && (
+                          <input
+                            checked={selectedPeople.includes(person.id)}
+                            className="invite-person-checkbox"
+                            name="userId"
+                            onChange={(event) => {
+                              setSelectedPeople((current) =>
+                                event.target.checked
+                                  ? [...current, person.id]
+                                  : current.filter((id) => id !== person.id),
+                              );
+                            }}
+                            type="checkbox"
+                            value={person.id}
+                          />
+                        )}
+                        <span className="invite-person-name">
+                          <strong>{person.display_name}</strong>
+                          {person.email && <small>{person.email}</small>}
+                        </span>
+                        {person.is_member && (
+                          <span className="invite-already-added">Already in group</span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                  {searchState.people.some((person) => !person.is_member) && (
+                    <PendingButton
+                      className="button button-primary button-small invite-add-selected"
+                      disabled={selectedPeople.length === 0}
+                      pendingLabel="Adding…"
+                    >
+                      Add {selectedPeople.length || ""} selected
+                    </PendingButton>
+                  )}
+                </form>
               ) : (
                 <p aria-live="polite" className="invite-explainer">
                   No matching SETTLR users. Use Email invite to invite this person to join.

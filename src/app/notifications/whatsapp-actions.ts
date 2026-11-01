@@ -19,9 +19,13 @@ const phonePattern = /^\+[1-9][0-9]{7,14}$/;
 const codePattern = /^\d{6}$/;
 
 function codeDigest(code: string) {
-  const secret = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!secret) throw new Error("SUPABASE_SERVICE_ROLE_KEY is not configured.");
+  const secret = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!secret) throw new Error("A server-only Supabase secret key is not configured.");
   return createHmac("sha256", secret).update(code).digest("hex");
+}
+
+function hasAdminKey() {
+  return Boolean(process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
 async function signedInUser() {
@@ -47,7 +51,7 @@ export async function requestWhatsAppCode(
   if (
     !isWhatsAppProviderConfigured() ||
     !otpTemplate ||
-    !process.env.SUPABASE_SERVICE_ROLE_KEY
+    !hasAdminKey()
   ) {
     return {
       phone,
@@ -101,7 +105,7 @@ export async function verifyWhatsAppCode(
 
   const code = String(formData.get("code") ?? "").trim();
   if (!codePattern.test(code)) return { error: "Enter the six-digit verification code." };
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  if (!hasAdminKey()) {
     return { error: "WhatsApp verification is not configured yet." };
   }
 
@@ -130,16 +134,35 @@ export async function saveWhatsAppPreferences(
 ): Promise<WhatsAppActionState> {
   const user = await signedInUser();
   if (!user) return { error: "Sign in again to continue." };
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  if (!hasAdminKey()) {
     return { error: "WhatsApp preferences are not configured yet." };
   }
 
   const admin = createAdminClient();
-  const { data: preference, error: readError } = await admin
+  const preferenceResult = await admin
     .from("whatsapp_preferences")
-    .select("phone_e164, phone_verified_at")
+    .select("phone_e164, phone_verified_at, phone_discoverable")
     .eq("user_id", user.id)
     .maybeSingle();
+  let preference: {
+    phone_e164: string | null;
+    phone_verified_at: string | null;
+    phone_discoverable: boolean;
+  } | null = preferenceResult.data;
+  let readError = preferenceResult.error;
+  let phoneSearchAvailable = true;
+  if (readError && ["PGRST204", "42703"].includes(readError.code)) {
+    phoneSearchAvailable = false;
+    const fallbackPreference = await admin
+      .from("whatsapp_preferences")
+      .select("phone_e164, phone_verified_at")
+      .eq("user_id", user.id)
+      .maybeSingle();
+    preference = fallbackPreference.data
+      ? { ...fallbackPreference.data, phone_discoverable: false }
+      : null;
+    readError = fallbackPreference.error;
+  }
   if (readError) {
     console.error("WhatsApp preference lookup failed:", readError.message);
     return {
@@ -163,15 +186,21 @@ export async function saveWhatsAppPreferences(
     return { error: "Configure an approved activity template before enabling WhatsApp alerts." };
   }
 
+  const updatedPreferences = {
+    opted_in_at: optedIn ? new Date().toISOString() : null,
+    expense_alerts: formData.get("expenseAlerts") === "on",
+    invitation_alerts: formData.get("invitationAlerts") === "on",
+    reminder_alerts: formData.get("reminderAlerts") === "on",
+    settlement_alerts: formData.get("settlementAlerts") === "on",
+    updated_at: new Date().toISOString(),
+  };
   const { error } = await admin
     .from("whatsapp_preferences")
     .update({
-      opted_in_at: optedIn ? new Date().toISOString() : null,
-      expense_alerts: formData.get("expenseAlerts") === "on",
-      invitation_alerts: formData.get("invitationAlerts") === "on",
-      reminder_alerts: formData.get("reminderAlerts") === "on",
-      settlement_alerts: formData.get("settlementAlerts") === "on",
-      updated_at: new Date().toISOString(),
+      ...updatedPreferences,
+      ...(phoneSearchAvailable
+        ? { phone_discoverable: formData.get("phoneDiscoverable") === "on" }
+        : {}),
     })
     .eq("user_id", user.id);
   if (error) {
@@ -181,8 +210,12 @@ export async function saveWhatsAppPreferences(
 
   revalidatePath("/");
   return {
-    success: optedIn
-      ? "WhatsApp alerts are enabled for your selected activity."
-      : "WhatsApp alerts are turned off.",
+    success: phoneSearchAvailable
+      ? optedIn
+        ? "WhatsApp alerts and your privacy preferences are updated."
+        : "Your notification and phone-search preferences are updated."
+      : optedIn
+        ? "WhatsApp alerts are enabled. Apply the phone-search migration to enable mobile-number invites."
+        : "WhatsApp alerts are turned off. Apply the phone-search migration to enable mobile-number invites.",
   };
 }
