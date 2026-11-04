@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --experimental-strip-types --test tests/money.test.mjs"
+    "test": "node --experimental-strip-types --test tests/money.test.mjs tests/transaction-filters.test.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.1",

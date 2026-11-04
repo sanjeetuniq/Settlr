@@ -194,6 +194,32 @@ export type Database = {
           created_at?: string;
         }
       >;
+      settlement_notifications: Table<
+        {
+          id: string;
+          settlement_id: string;
+          recipient_id: string;
+          group_id: string;
+          group_name: string;
+          currency: string;
+          from_user_id: string;
+          amount_minor: number;
+          read_at: string | null;
+          created_at: string;
+        },
+        {
+          id?: string;
+          settlement_id: string;
+          recipient_id: string;
+          group_id: string;
+          group_name: string;
+          currency: string;
+          from_user_id: string;
+          amount_minor: number;
+          read_at?: string | null;
+          created_at?: string;
+        }
+      >;
       whatsapp_preferences: Table<
         {
           user_id: string;
@@ -423,6 +449,27 @@ export type Database = {
           created_at: string;
           person_a_id: string;
           person_b_id: string | null;
+        }[];
+      };
+      get_filtered_transactions: {
+        Args: {
+          p_person_id?: string | null;
+          p_start_date?: string | null;
+          p_end_date?: string | null;
+          p_timezone?: string;
+        };
+        Returns: {
+          id: string;
+          group_id: string;
+          group_name: string;
+          currency: string;
+          kind: string;
+          description: string;
+          amount_minor: number;
+          created_at: string;
+          person_a_id: string;
+          person_b_id: string | null;
+          activity_date: string;
         }[];
       };
     };

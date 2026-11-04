@@ -1,52 +1,65 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { loadMoreTransactions } from "@/app/groups/transaction-actions";
-import type { EnrichedTransactionRow } from "@/lib/transaction-types";
+import type { EnrichedFilteredTransactionRow } from "@/lib/transaction-types";
 import { formatMoney } from "@/lib/money";
 
+function csvCell(value: string) {
+  const safeValue = /^[\s]*[=+\-@]/.test(value) ? `'${value}` : value;
+  return `"${safeValue.replaceAll('"', '""')}"`;
+}
+
 export function TransactionHistory({
-  initialRows,
-  initialHasMore,
+  rows,
   names,
   receipts,
-  initialError,
+  reportSummary,
 }: {
-  initialRows: EnrichedTransactionRow[];
-  initialHasMore: boolean;
+  rows: EnrichedFilteredTransactionRow[];
   names: Record<string, string>;
   receipts: Record<string, { file_name: string; signed_url: string }[]>;
-  initialError?: string;
+  reportSummary: string;
 }) {
-  const [rows, setRows] = useState(initialRows);
-  const [hasMore, setHasMore] = useState(initialHasMore);
-  const [error, setError] = useState(initialError ?? "");
-  const [isPending, startTransition] = useTransition();
-
-  function loadMore() {
-    const lastRow = rows.at(-1);
-    if (!lastRow || isPending) return;
-
-    setError("");
-    startTransition(async () => {
-      const result = await loadMoreTransactions(lastRow.created_at, lastRow.id);
-      if (result.error) {
-        setError(result.error);
-        return;
-      }
-      setRows((current) => [...current, ...(result.rows ?? [])]);
-      setHasMore(result.hasMore ?? false);
-    });
+  function exportCsv() {
+    const records = [
+      ["Date", "Group", "Type", "Description", "Paid by", "Paid to", "Amount", "Currency", "Settlement note"],
+      ...rows.map((row) => [
+        row.activity_date,
+        row.group_name,
+        row.kind,
+        row.description,
+        names[row.person_a_id] ?? "Member",
+        row.person_b_id ? names[row.person_b_id] ?? "Member" : "",
+        formatMoney(row.amount_minor, row.currency),
+        row.currency,
+        row.comment ?? "",
+      ]),
+    ];
+    const csv = records.map((record) => record.map((value) => csvCell(String(value))).join(",")).join("\r\n");
+    const url = URL.createObjectURL(new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "settlr-transactions.csv";
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
   return (
-    <section aria-labelledby="transaction-history-heading" className="panel transaction-history-panel" id="activity">
+    <section aria-labelledby="transaction-history-heading" className="panel transaction-history-panel printable-transaction-report">
       <div className="panel-heading">
         <div>
-          <div className="eyebrow">THE LATEST</div>
-          <h2 id="transaction-history-heading">Recent transactions</h2>
+          <div className="eyebrow">THE LATEST · UP TO 50</div>
+          <h2 id="transaction-history-heading">Transactions</h2>
+          <p className="transaction-export-summary">{reportSummary} · {rows.length} shown</p>
         </div>
-        <span className="activity-count">{rows.length} shown</span>
+        <div className="transaction-export-actions no-print">
+          <span className="activity-count">{rows.length} shown</span>
+          <button className="button button-outline button-small" disabled={!rows.length} onClick={exportCsv} type="button">
+            Export CSV
+          </button>
+          <button className="button button-outline button-small" disabled={!rows.length} onClick={() => window.print()} type="button">
+            Save as PDF
+          </button>
+        </div>
       </div>
       {rows.length > 0 ? (
         <div className="transaction-list">
@@ -62,7 +75,7 @@ export function TransactionHistory({
                     ? `${names[row.person_a_id] ?? "A group member"} paid ${names[row.person_b_id ?? ""] ?? "a group member"}`
                     : `${names[row.person_a_id] ?? "A group member"} paid`}
                   {" · "}{row.group_name} ·{" "}
-                  {new Date(row.created_at).toLocaleDateString("en-IN", {
+                  {new Date(`${row.activity_date}T12:00:00`).toLocaleDateString("en-IN", {
                     day: "numeric",
                     month: "short",
                     year: "numeric",
@@ -70,7 +83,7 @@ export function TransactionHistory({
                 </span>
                 {(receipts[row.id] ?? []).map((receipt) => (
                   <a
-                    className="receipt-link"
+                    className="receipt-link no-print"
                     href={receipt.signed_url}
                     key={receipt.file_name}
                     rel="noreferrer"
@@ -83,12 +96,7 @@ export function TransactionHistory({
                   <small className="transaction-comment">Settlement note: {row.comment}</small>
                 )}
                 {row.settlementAttachment && (
-                  <a
-                    className="receipt-link"
-                    href={row.settlementAttachment.signed_url}
-                    rel="noreferrer"
-                    target="_blank"
-                  >
+                  <a className="receipt-link no-print" href={row.settlementAttachment.signed_url} rel="noreferrer" target="_blank">
                     View settlement attachment · {row.settlementAttachment.file_name}
                   </a>
                 )}
@@ -100,20 +108,9 @@ export function TransactionHistory({
       ) : (
         <div className="activity-empty">
           <span>☼</span>
-          <b>No transactions yet</b>
-          <small>Expenses and settlements will appear here.</small>
+          <b>No matching transactions</b>
+          <small>Try changing the person or date filters.</small>
         </div>
-      )}
-      {error && <p aria-live="polite" className="form-message form-error">{error}</p>}
-      {hasMore && (
-        <button
-          className="button button-outline button-small history-more"
-          disabled={isPending}
-          onClick={loadMore}
-          type="button"
-        >
-          {isPending ? "Loading…" : "Load more"}
-        </button>
       )}
     </section>
   );

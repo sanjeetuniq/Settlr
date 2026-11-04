@@ -202,6 +202,8 @@ export async function POST(request: NextRequest) {
 
   revalidatePath("/");
   revalidatePath("/balances");
+  revalidatePath("/notifications");
+  revalidatePath("/transactions");
   return NextResponse.json(
     { success: true, settlementId, fullySettled },
     { status: 201 },

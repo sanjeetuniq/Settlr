@@ -3,9 +3,9 @@ import "server-only";
 import type { EnrichedTransactionRow, TransactionRow } from "@/lib/transaction-types";
 import { createClient } from "@/lib/supabase/server";
 
-export async function addSettlementDetails(
-  rows: TransactionRow[],
-): Promise<EnrichedTransactionRow[]> {
+export async function addSettlementDetails<T extends TransactionRow>(
+  rows: T[],
+): Promise<(T & Omit<EnrichedTransactionRow, keyof TransactionRow>)[]> {
   const settlementIds = rows
     .filter((row) => row.kind === "settlement")
     .map((row) => row.id);

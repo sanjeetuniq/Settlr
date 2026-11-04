@@ -125,6 +125,7 @@ export async function verifyWhatsAppCode(
   if (!data) return { error: "The code is incorrect or expired. Request a new code to try again." };
 
   revalidatePath("/");
+  revalidatePath("/settings/whatsapp");
   return { success: "Your WhatsApp number is verified. Choose your alerts and opt in below." };
 }
 
@@ -209,6 +210,7 @@ export async function saveWhatsAppPreferences(
   }
 
   revalidatePath("/");
+  revalidatePath("/settings/whatsapp");
   return {
     success: phoneSearchAvailable
       ? optedIn

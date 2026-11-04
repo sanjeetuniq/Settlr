@@ -562,7 +562,7 @@ export async function sendReminder(formData: FormData) {
 
 export async function markReminderRead(formData: FormData) {
   const reminderId = String(formData.get("reminderId") ?? "");
-  if (!uuidPattern.test(reminderId)) goWithError("reminder-details");
+  if (!uuidPattern.test(reminderId)) redirect("/reminders?error=reminder-details");
 
   const { supabase } = await getSignedInClient();
   const { error } = await supabase.rpc("mark_reminder_read", {
@@ -570,8 +570,9 @@ export async function markReminderRead(formData: FormData) {
   });
   if (error) {
     console.error("Reminder update failed:", error.message);
-    goWithError("reminder-update");
+    redirect("/reminders?error=reminder-update");
   }
 
   revalidatePath("/");
+  revalidatePath("/reminders");
 }

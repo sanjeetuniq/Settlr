@@ -1,26 +1,20 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { AppShell } from "@/components/app-shell";
 import { BrandLogo } from "@/components/brand-logo";
 import { ExpenseComposer } from "@/components/expense-composer";
 import { InviteForm } from "@/components/invite-form";
 import { SettlementCelebration } from "@/components/settlement-celebration";
 import { SettlementForm } from "@/components/settlement-form";
-import { TransactionHistory } from "@/components/transaction-history";
-import { WhatsAppSettings } from "@/components/whatsapp-settings";
 import { PendingButton } from "@/components/pending-button";
 import { ProfileAvatar } from "@/components/profile-avatar";
-import type { EnrichedTransactionRow } from "@/lib/transaction-types";
 import {
   archiveGroup,
   createGroup,
   joinGroup,
-  joinOpenGroup,
-  markReminderRead,
   sendReminder,
   setGroupPublic,
 } from "@/app/groups/actions";
-import { signOut } from "@/app/auth/actions";
-import { addSettlementDetails } from "@/lib/settlement-history";
 import {
   formatMoney,
   simplifyBalances,
@@ -145,21 +139,6 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
   }
   if (!user) redirect(signInPath);
 
-  const { data: todosData, error: todosError } = await supabase
-    .from("todos")
-    .select("id, name");
-  const todosUnavailable = todosError?.code === "PGRST205";
-  if (todosError && !todosUnavailable) {
-    console.error("Todo list query failed:", todosError.message);
-    throw new Error("Your todos could not be loaded.");
-  }
-  if (todosUnavailable) {
-    console.warn(
-      "Todo list unavailable: public.todos was not found by the Supabase Data API. Confirm the table exists and is exposed.",
-    );
-  }
-  const todos = todosData ?? [];
-
   const { data: membershipRows, error: membershipsError } = await supabase
     .from("group_members")
     .select("group_id")
@@ -233,8 +212,7 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
     }));
   }
 
-  const { data: openGroups, error: openGroupsError } =
-    await supabase.rpc("list_open_groups");
+  const { error: openGroupsError } = await supabase.rpc("list_open_groups");
   let openGroupDiscoveryAvailable = true;
   if (openGroupsError) {
     if (["PGRST202", "42883"].includes(openGroupsError.code)) {
@@ -245,10 +223,6 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
       throw new Error("Open groups could not be loaded.");
     }
   }
-  const memberGroupIdSet = new Set(memberGroupIds);
-  const discoverableGroups = (openGroups ?? []).filter(
-    (group) => !memberGroupIdSet.has(group.id),
-  );
   const optionalMigrationsAvailable =
     visibilityMigrationAvailable &&
     archiveMigrationAvailable &&
@@ -277,39 +251,6 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
         throw new Error(`The ${group.name} group details could not be loaded.`);
       }
 
-      const expenseIds = expensesResult.data.map((expense) => expense.id);
-      let attachments: {
-        expense_id: string;
-        file_name: string;
-        signed_url: string;
-      }[] = [];
-      if (expenseIds.length > 0) {
-        const { data: attachmentRows, error: attachmentsError } = await supabase
-          .from("expense_attachments")
-          .select("expense_id, file_name, storage_path")
-          .in("expense_id", expenseIds);
-        if (attachmentsError) {
-          console.error("Receipt metadata query failed:", attachmentsError.message);
-          throw new Error(`Receipts in ${group.name} could not be loaded.`);
-        }
-        attachments = await Promise.all(
-          attachmentRows.map(async (attachment) => {
-            const { data, error } = await supabase.storage
-              .from("expense-receipts")
-              .createSignedUrl(attachment.storage_path, 60, { download: true });
-            if (error) {
-              console.error("Receipt link creation failed:", error.message);
-              throw new Error(`A receipt in ${group.name} could not be opened.`);
-            }
-            return {
-              expense_id: attachment.expense_id,
-              file_name: attachment.file_name,
-              signed_url: data.signedUrl,
-            };
-          }),
-        );
-      }
-
       let invites: { id: string; expires_at: string }[] = [];
       if (group.created_by === user.id) {
         const { data: inviteRows, error: inviteError } = await supabase
@@ -332,83 +273,23 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
         expenses: expensesResult.data,
         balances: balancesResult.data,
         suggestions: simplifyBalances(balancesResult.data),
-        attachments,
         invites,
       };
     }),
   );
 
-  const { data: historyData, error: historyQueryError } = await supabase.rpc(
-    "get_recent_transactions",
-    { p_before_created_at: null, p_before_id: null, p_limit: 21 },
-  );
-  let transactionRows: EnrichedTransactionRow[] = [];
-  let transactionDetailsError: string | undefined;
-  if (!historyQueryError && historyData) {
-    try {
-      transactionRows = await addSettlementDetails(historyData);
-    } catch (detailsError) {
-      console.error("Settlement details could not be loaded:", detailsError);
-      transactionRows = historyData.map((row) => ({
-        ...row,
-        comment: null,
-        settlementAttachment: null,
-      }));
-      transactionDetailsError =
-        "Settlement notes and attachments are unavailable. Apply the settlement comments and attachments migration.";
-    }
-  }
-  const transactionHistoryError = historyQueryError
-    ? ["PGRST202", "42883"].includes(historyQueryError.code)
-      ? "Apply the WhatsApp and transaction-history migration to enable combined history."
-      : "Recent transactions could not be loaded."
-    : transactionDetailsError;
-  if (historyQueryError && !["PGRST202", "42883"].includes(historyQueryError.code)) {
-    console.error("Transaction history query failed:", historyQueryError.message);
-  }
-
-  let whatsappAvailable = false;
-  let whatsappUnavailableMessage: string | undefined;
-  let whatsappPreference: {
-    phone_e164: string | null;
-    phone_verified_at: string | null;
-    phone_discoverable?: boolean;
-    opted_in_at: string | null;
-    expense_alerts: boolean;
-    invitation_alerts: boolean;
-    reminder_alerts: boolean;
-    settlement_alerts: boolean;
-  } | null = null;
   let phoneSearchAvailable = false;
   if (process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY) {
     const admin = createAdminClient();
-    const preferenceResult = await admin
+    const { error: phoneSearchError } = await admin
       .from("whatsapp_preferences")
-      .select("phone_e164, phone_verified_at, phone_discoverable, opted_in_at, expense_alerts, invitation_alerts, reminder_alerts, settlement_alerts")
+      .select("phone_discoverable")
       .eq("user_id", user.id)
       .maybeSingle();
-    let preferenceData = preferenceResult.data;
-    let preferenceError = preferenceResult.error;
-    if (preferenceError && ["PGRST204", "42703"].includes(preferenceError.code)) {
-      phoneSearchAvailable = false;
-      const fallbackPreference = await admin
-        .from("whatsapp_preferences")
-        .select("phone_e164, phone_verified_at, opted_in_at, expense_alerts, invitation_alerts, reminder_alerts, settlement_alerts")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      preferenceData = fallbackPreference.data
-        ? { ...fallbackPreference.data, phone_discoverable: false }
-        : null;
-      preferenceError = fallbackPreference.error;
-    }
-    if (preferenceError && !["PGRST205", "42P01"].includes(preferenceError.code)) {
-      console.error("WhatsApp preferences query failed:", preferenceError.message);
-      whatsappUnavailableMessage =
-        "WhatsApp preferences are temporarily unavailable. Your groups and transactions are unaffected.";
-    }
-    if (!preferenceError) {
-      whatsappAvailable = true;
-      whatsappPreference = preferenceData;
+    if (phoneSearchError && !["PGRST204", "PGRST205", "42703", "42P01"].includes(phoneSearchError.code)) {
+      console.error("Phone-search availability lookup failed:", phoneSearchError.message);
+    } else {
+      phoneSearchAvailable = !phoneSearchError;
     }
   }
 
@@ -419,11 +300,6 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
         ...group.members.map((member) => member.user_id),
         ...group.expenses.map((expense) => expense.payer_id),
       ]),
-      ...transactionRows.flatMap((row) =>
-        [row.person_a_id, row.person_b_id].filter(
-          (profileId): profileId is string => profileId !== null,
-        ),
-      ),
     ]),
   );
   const profileResult = await supabase
@@ -497,17 +373,6 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
       profileAvatarUrls.set(profileId, signedUrl);
     }
   }
-  const transactionProfileNames = Object.fromEntries(profileNames);
-  const receiptsByExpenseId = Object.fromEntries(
-    groupData.flatMap((group) =>
-      group.attachments.map((attachment) => [
-        attachment.expense_id,
-        group.attachments
-          .filter((candidate) => candidate.expense_id === attachment.expense_id)
-          .map(({ file_name, signed_url }) => ({ file_name, signed_url })),
-      ]),
-    ),
-  );
   const groupsWithNames = groupData.map((group) => ({
     ...group,
     members: group.members.map((member) => ({
@@ -521,7 +386,6 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
     })),
   }));
   const activeGroups = groupsWithNames.filter((group) => group.archived_at === null);
-  const archivedGroups = groupsWithNames.filter((group) => group.archived_at !== null);
   const selectedGroup =
     groupsWithNames.find((group) => group.id === params.group) ??
     groupsWithNames.find((group) => group.archived_at === null) ??
@@ -536,18 +400,6 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
     params.notice === "settlement-recorded" &&
     Boolean(params.celebration) &&
     selectedGroup?.balances.every((balance) => balance.balance_minor === 0);
-
-  const { data: reminders, error: remindersError } = await supabase
-    .from("reminders")
-    .select("id, group_id, message, created_at")
-    .eq("recipient_id", user.id)
-    .is("read_at", null)
-    .order("created_at", { ascending: false })
-    .limit(5);
-  if (remindersError) {
-    console.error("Reminder query failed:", remindersError.message);
-    throw new Error("Your reminders could not be loaded.");
-  }
 
   const name = profileNames.get(user.id) ?? "Member";
   const amountsByCurrency = groupData.reduce(
@@ -587,7 +439,6 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
     );
   }
 
-  const unreadCount = reminders.length;
   const currentBalance =
     selectedGroup?.balances.find((balance) => balance.user_id === user.id)
       ?.balance_minor ?? 0;
@@ -596,106 +447,10 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
     : 0;
 
   return (
-    <main className="app-frame">
+    <AppShell activePage="overview" groupId={selectedGroup?.id}>
       <SettlementCelebration
         celebrationId={celebrateSettlement ? params.celebration : undefined}
       />
-      <aside className="sidebar">
-        <Link className="brand brand-dark" href="/">
-          <BrandLogo sizes="158px" />
-        </Link>
-        <div className="sidebar-section-label">YOUR SPACE</div>
-        <Link
-          className="sidebar-link active"
-          href={selectedGroup ? `/?group=${selectedGroup.id}#overview` : "/#overview"}
-        >
-          <span className="side-icon">◫</span> Overview
-        </Link>
-        <a className="sidebar-link" href="#activity">
-          <span className="side-icon">↗</span> Activity
-        </a>
-        <a className="sidebar-link" href="#settle">
-          <span className="side-icon">⇄</span> Settle up
-        </a>
-        <div className="sidebar-section-heading">
-          <span className="sidebar-section-label">GROUPS</span>
-          <span className="group-count">{activeGroups.length}</span>
-        </div>
-        <a className="sidebar-link" href="#group-switcher">
-          <span className="side-icon">▦</span> Select or create
-        </a>
-        <div className="sidebar-section-heading archive-heading">
-          <span className="sidebar-section-label">ARCHIVE</span>
-          <span className="group-count">{archivedGroups.length}</span>
-        </div>
-        {archivedGroups.length > 0 ? (
-          <nav aria-label="Archived groups" className="group-nav archive-nav">
-            {archivedGroups.map((group, index) => (
-              <Link
-                className={`group-nav-link ${selectedGroup?.id === group.id ? "selected" : ""}`}
-                href={`/?group=${group.id}`}
-                key={group.id}
-              >
-                <span className={`group-symbol group-symbol-${index % 4}`}>
-                  {group.name.slice(0, 1).toUpperCase()}
-                </span>
-                <span className="group-nav-name">{group.name}</span>
-                <span aria-label="Archived" className="group-nav-members">✓</span>
-              </Link>
-            ))}
-          </nav>
-        ) : (
-          <p className="archive-empty">Settled groups will appear here.</p>
-        )}
-        <div className="sidebar-bottom">
-          <div className="privacy-chip"><span>✦</span> You control who can join</div>
-          <form action={signOut}>
-            <PendingButton className="sidebar-signout" pendingLabel="Signing out…">Sign out <span aria-hidden="true">↗</span></PendingButton>
-          </form>
-        </div>
-      </aside>
-
-      <section className="main-column">
-        <header className="topbar">
-          <nav aria-label="Breadcrumb" className="breadcrumb">
-            <Link href={selectedGroup ? `/?group=${selectedGroup.id}` : "/"}>Your space</Link>
-            <span aria-hidden="true">/</span>
-            <a href="#overview">Overview</a>
-          </nav>
-          <div className="topbar-actions">
-            <a className="notification-link" href="#reminders" aria-label={`${unreadCount} unread reminders`}>
-              ♧{unreadCount > 0 && <span className="notification-dot" />}
-            </a>
-            <Link aria-label="SETTLR dashboard" className="dashboard-logo-link" href="/">
-              <BrandLogo className="dashboard-logo" priority sizes="42px" />
-            </Link>
-            <details className="account-menu">
-              <summary aria-label="Open account menu" className="user-chip">
-                <ProfileAvatar
-                  className="avatar-current"
-                  imageUrl={profileAvatarUrls.get(user.id) ?? null}
-                  initials={initials(name)}
-                />
-                <span>{name}</span>
-                <span aria-hidden="true" className="chevron">⌄</span>
-              </summary>
-              <div className="account-menu-popover">
-                <div className="account-menu-details">
-                  <strong>{name}</strong>
-                  {user.email && <span>{user.email}</span>}
-                </div>
-                <Link className="account-menu-settings" href="/settings">
-                  Profile settings
-                </Link>
-                <form action={signOut}>
-                  <PendingButton className="account-menu-signout" pendingLabel="Signing out…">Sign out</PendingButton>
-                </form>
-              </div>
-            </details>
-          </div>
-        </header>
-
-        <div className="content-area">
           {!optionalMigrationsAvailable && (
             <OptionalMigrationsNotice
               archiveAvailable={archiveMigrationAvailable}
@@ -1069,12 +824,23 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
                               groupId={selectedGroup.id}
                               toUserId={creditor.id}
                             />
-                            {debtor.id !== user.id && (
-                              <form action={sendReminder}>
+                            {creditor.id === user.id && (
+                              <form action={sendReminder} className="settlement-reminder-form">
                                 <input name="groupId" type="hidden" value={selectedGroup.id} />
                                 <input name="recipientId" type="hidden" value={debtor.id} />
-                                <input name="message" type="hidden" value={`${name} sent you a reminder to settle up in ${selectedGroup.name}.`} />
-                                <PendingButton className="button button-text button-small" pendingLabel="Sending…">Send in-app reminder</PendingButton>
+                                <label>
+                                  Reminder message
+                                  <textarea
+                                    defaultValue={`${name} requests ${formatMoney(suggestion.amount_minor, selectedGroup.currency)} for ${selectedGroup.name}.`}
+                                    maxLength={280}
+                                    name="message"
+                                    required
+                                    rows={2}
+                                  />
+                                </label>
+                                <PendingButton className="button button-text button-small" pendingLabel="Sending…">
+                                  Remind {debtor.name} to settle
+                                </PendingButton>
                               </form>
                             )}
                             </div>
@@ -1095,164 +861,10 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
             </section>
           </div>
 
-          <TransactionHistory
-            key={`${selectedGroup?.id ?? "all"}-${transactionRows[0]?.id ?? transactionHistoryError ?? "empty"}`}
-            initialError={transactionHistoryError}
-            initialHasMore={transactionRows.length > 20}
-            initialRows={transactionRows.slice(0, 20)}
-            names={transactionProfileNames}
-            receipts={receiptsByExpenseId}
-          />
-          {transactionHistoryError && selectedGroup && (
-            <section aria-label="Recent expenses" className="panel activity-panel">
-              <div className="panel-heading">
-                <div>
-                  <div className="eyebrow">YOUR GROUP</div>
-                  <h2>Recent expenses</h2>
-                </div>
-                <span className="activity-count">{selectedGroup.expenses.length} recent</span>
-              </div>
-              {selectedGroup.expenses.map((expense) => (
-                <article className="activity-row" key={expense.id}>
-                  <span className="activity-category">↗</span>
-                  <div className="activity-description">
-                    <b>{expense.description}</b>
-                    <span>{expense.payerName} paid · {new Date(`${expense.spent_at}T12:00:00`).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</span>
-                    {selectedGroup.attachments
-                      .filter((attachment) => attachment.expense_id === expense.id)
-                      .map((attachment) => (
-                        <a
-                          className="receipt-link"
-                          href={attachment.signed_url}
-                          key={attachment.file_name}
-                          rel="noreferrer"
-                          target="_blank"
-                        >
-                          View receipt · {attachment.file_name}
-                        </a>
-                      ))}
-                  </div>
-                  <strong>{formatMoney(expense.amount_minor, selectedGroup.currency)}</strong>
-                </article>
-              ))}
-            </section>
-          )}
-
-          <section aria-labelledby="open-groups-heading" className="panel open-groups-panel">
-            <div className="panel-heading">
-              <div>
-                <div className="eyebrow">MEET YOUR PEOPLE</div>
-                <h2 id="open-groups-heading">Open groups</h2>
-              </div>
-            </div>
-            <p className="muted">
-              Discover groups that are open to anyone with a SETTLR account.
-            </p>
-            {!openGroupDiscoveryAvailable || !visibilityMigrationAvailable ? (
-              <p className="muted small-empty">
-                Open-group discovery will be available after the database migrations are applied.
-              </p>
-            ) : discoverableGroups.length > 0 ? (
-              <div className="open-group-list">
-                {discoverableGroups.map((group) => (
-                  <article className="open-group-row" key={group.id}>
-                    <span className="group-symbol group-symbol-0">
-                      {group.name.slice(0, 1).toUpperCase()}
-                    </span>
-                    <div className="open-group-details">
-                      <strong>{group.name}</strong>
-                      <span>{group.currency} · Open to join</span>
-                    </div>
-                    <form action={joinOpenGroup}>
-                      <input name="groupId" type="hidden" value={group.id} />
-                      <PendingButton className="button button-outline button-small" pendingLabel="Joining…">Join</PendingButton>
-                    </form>
-                  </article>
-                ))}
-              </div>
-            ) : (
-              <p className="muted small-empty">No open groups right now.</p>
-            )}
-          </section>
-
-          <section className="reminders-grid">
-            <section className="panel reminders-panel" id="reminders">
-              <div className="panel-heading">
-                <div>
-                  <div className="eyebrow">A FRIENDLY NUDGE</div>
-                  <h2>Your reminders</h2>
-                </div>
-                {unreadCount > 0 && <span className="reminder-count">{unreadCount} new</span>}
-              </div>
-              {reminders.length ? (
-                <div className="reminder-list">
-                  {reminders.map((reminder) => {
-                    const groupName = groupsWithNames.find((group) => group.id === reminder.group_id)?.name ?? "Your group";
-                    return (
-                      <article className="reminder-row" key={reminder.id}>
-                        <span className="reminder-symbol">↗</span>
-                        <div><b>{groupName}</b><p>{reminder.message}</p></div>
-                        <form action={markReminderRead}>
-                          <input name="reminderId" type="hidden" value={reminder.id} />
-                          <PendingButton ariaLabel="Mark reminder as read" className="dismiss-reminder" pendingLabel="…">✓</PendingButton>
-                        </form>
-                      </article>
-                    );
-                  })}
-                </div>
-              ) : (
-                <p className="muted small-empty">No new nudges. A peaceful little inbox.</p>
-              )}
-              <p className="privacy-note">Reminders stay in the app. No email or SMS is sent.</p>
-            </section>
-          </section>
-          <WhatsAppSettings
-            alerts={{
-              expenses: whatsappPreference?.expense_alerts ?? true,
-              invitations: whatsappPreference?.invitation_alerts ?? true,
-              reminders: whatsappPreference?.reminder_alerts ?? true,
-              settlements: whatsappPreference?.settlement_alerts ?? true,
-            }}
-            available={whatsappAvailable}
-            unavailableMessage={whatsappUnavailableMessage}
-            optedIn={Boolean(whatsappPreference?.opted_in_at)}
-            phone={whatsappPreference?.phone_e164 ?? null}
-            phoneDiscoverable={whatsappPreference?.phone_discoverable ?? false}
-            phoneSearchAvailable={phoneSearchAvailable}
-            providerConfigured={Boolean(
-              process.env.WHATSAPP_ACCESS_TOKEN &&
-              process.env.WHATSAPP_PHONE_NUMBER_ID &&
-              /^v\d+\.\d+$/.test(process.env.WHATSAPP_GRAPH_API_VERSION ?? "") &&
-              process.env.WHATSAPP_OTP_TEMPLATE_NAME &&
-              process.env.WHATSAPP_ACTIVITY_TEMPLATE_NAME
-            )}
-            verified={Boolean(whatsappPreference?.phone_verified_at)}
-          />
-          <section aria-labelledby="todos-heading" className="panel todos-panel">
-            <div className="panel-heading">
-              <div>
-                <div className="eyebrow">YOUR LIST</div>
-                <h2 id="todos-heading">Todos</h2>
-              </div>
-            </div>
-            {todosUnavailable ? (
-              <p className="muted" role="status">
-                Todos are unavailable. Confirm the public.todos table exists and is exposed through the Supabase Data API.
-              </p>
-            ) : (
-              <ul className="todos-list">
-                {todos.map((todo) => (
-                  <li key={todo.id}>{todo.name}</li>
-                ))}
-              </ul>
-            )}
-          </section>
           <footer className="app-footer">
             <span>SETTLR · SETTLES SETTLEMENTS IN STYLE 😉</span>
             <span>Amounts stored securely · {groupsWithNames.length} groups · <a href="mailto:helpdesk_settlr@gmail.com">Support</a></span>
           </footer>
-        </div>
-      </section>
-    </main>
+    </AppShell>
   );
 }
